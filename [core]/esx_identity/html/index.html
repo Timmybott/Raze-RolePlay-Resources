@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <link href="css/style.css" rel="stylesheet" />
+    <title>ESX Identity | Raze Roleplay</title>
+</head>
+
+<body class="none" onkeydown="TriggeredKey(this)">
+    <div class="fullscreen-bg"></div>
+    
+    <div class="logo-wrapper">
+        <img src="https://razerp.spcfy.eu/assets/RazeRoleplayPBTransparent.png" class="bg-logo" alt="Logo">
+    </div>
+
+    <div id="app">
+        <div class="dialog">
+            
+            <div class="left_text">
+                <div>
+                    <h1 data-language="character_Creation">Charakter</h1>
+                    <p data-language="character_Detail">Erstelle deine Identität</p>
+                </div>
+            </div>
+
+            <form id="register" name="register" action="#">
+                <div class="input-field">
+                    <p data-language="firstName">Vorname</p>
+                    <input id="firstname" type="text" name="firstname" placeholder="Max" minlength="3" maxlength="20" pattern="[a-zA-Z]*" required />
+                </div>
+
+                <div class="input-field">
+                    <p data-language="lastName">Nachname</p>
+                    <input id="lastname" type="text" name="lastname" placeholder="Mustermann" minlength="3" maxlength="20" pattern="[a-zA-Z]*" required />
+                </div>
+
+                <div class="input-field">
+                    <p data-language="DOB">Geburtsdatum</p>
+                    <input id="dateofbirth" type="date" name="dateofbirth" required />
+                </div>
+
+                <div class="input-field">
+                    <p data-language="Height">Abmessung (cm)</p>
+                    <input id="height" type="number" name="height" min="140" max="210" placeholder="175" required />
+                </div>
+
+                <p data-language="Gender" class="label-text">Geschlecht</p>
+                <div class="radio-toolbar">
+                    <div class="gender-option">
+                        <input type="radio" id="radiom" name="sex" value="m" checked>
+                        <label for="radiom">
+                            <span data-language="Male">Mann</span>
+                        </label>
+                    </div>
+                    <div class="gender-option">
+                        <input type="radio" id="radiof" name="sex" value="f">
+                        <label for="radiof">
+                            <span data-language="Female">Frau</span>
+                        </label>
+                    </div>
+                </div>
+
+                <button id="submit" type="submit">
+                    <p data-language="Create">Charakter Erstellen</p>
+                </button>
+            </form>
+
+            <div class="bottom-slogan">
+                <div class="line"></div>
+                <h3 data-language="slogan">Raze Roleplay</h3>
+                <div class="line"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function TriggeredKey(e) {
+            if (window.event.keyCode === 13 || window.event.keyCode === 27) return false;
+        }
+    </script>
+    <script src="js/script.js" defer></script>
+</body>
+</html>

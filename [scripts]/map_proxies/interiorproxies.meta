@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<SInteriorOrderData>
+  <startFrom value="2200" />
+  <proxies>
+
+
+<!-- CheapM_AirportV2_FiveM -->
+<Item>hei_ap1_02_strm_0</Item>
+<Item>hei_ap1_02_long_0</Item>
+<Item>hei_ap1_01_b_strm_0</Item>
+<Item>hei_ap1_01_b</Item>
+<Item>hei_ap1_01_a_strm_18</Item>
+<Item>hei_ap1_01_a_long_1</Item>
+<Item>hei_ap1_01_a_critical_0</Item>
+<Item>hei_ap1_01_a</Item>
+<Item>ap1_occl_01</Item>
+<Item>ap1_occl_00</Item>
+
+<!-- wxmaps_commons -->
+<Item>vw_distlodlights_medium012</Item>
+<Item>vw_distlodlights_medium028</Item>
+<Item>vw_distlodlights_small004</Item>
+<Item>vw_distlodlights_small020</Item>
+<Item>vw_lodlights_medium012</Item>
+<Item>vw_lodlights_medium028</Item>
+<Item>vw_lodlights_small004</Item>
+<Item>vw_lodlights_small020</Item>
+
+<!-- wxmaps_lshospital -->
+<Item>wx_lshospital_lodlights</Item>
+<Item>wx_lshospital_distantlights</Item>
+<Item>wx_hospital_stream</Item>
+<Item>wx_hospital_occl</Item>
+<Item>wx_hospital_lvl2</Item>
+<Item>wx_hospital_lvl1</Item>
+<Item>wx_hospital_lvl0</Item>
+<Item>wx_hospital_critical</Item>
+<Item>wx_ext_lshospital_lod</Item>
+
+<!-- wxmaps_lshospital_v -->
+<Item>hei_dt1_01</Item>
+<Item>hei_dt1_01_critical_0</Item>
+<Item>hei_dt1_01_long_0</Item>
+<Item>hei_dt1_01_strm_0</Item>
+<Item>hei_dt1_occl_01</Item>
+<Item>hei_dt1_occl_03</Item>
+<Item>hei_dt1_rd1</Item>
+<Item>hei_dt1_rd1_critical_0</Item>
+<Item>hei_dt1_rd1_long_0</Item>
+<Item>hei_dt1_rd1_strm_2</Item>
+<Item>vw_distlodlights_medium015</Item>
+<Item>vw_distlodlights_small040</Item>
+<Item>vw_distlodlights_small041</Item>
+<Item>vw_lodlights_medium015</Item>
+<Item>vw_lodlights_small040</Item>
+<Item>vw_lodlights_small041</Item>
+
+
+</proxies>
+</SInteriorOrderData>

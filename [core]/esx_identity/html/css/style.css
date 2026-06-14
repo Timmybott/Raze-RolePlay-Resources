@@ -1,0 +1,194 @@
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&display=swap');
+
+/* Initiales Verstecken */
+.none {
+    display: none !important;
+}
+
+body {
+    padding: 0;
+    margin: 0;
+    font-family: "Montserrat", sans-serif;
+    overflow: hidden;
+    background-color: transparent !important;
+    height: 100vh;
+    width: 100vw;
+}
+
+.fullscreen-bg {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: black;
+    z-index: -2;
+}
+
+/* LOGO POSITIONIERUNG: Mittig im verbleibenden Platz rechts */
+.logo-wrapper {
+    position: absolute;
+    top: 0;
+    right: 0;
+    /* 100% Breite minus (Menü-Breite 480px + Links-Abstand 5%) */
+    width: calc(100% - (480px + 5%)); 
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: -1;
+}
+
+.bg-logo {
+    width: 550px; /* Größe deines Logos */
+    height: auto;
+    opacity: 0.8;
+    pointer-events: none;
+}
+
+/* HAUPTMENÜ: Zentriert auf der Y-Achse */
+.dialog {
+    width: 480px;
+    padding: 20px;
+    position: absolute;
+    top: 50%; /* Vertikale Mitte */
+    left: 5%; /* Horizontaler Abstand von links */
+    transform: translateY(-50%); /* Zieht das Menü um die eigene Hälfte hoch für perfekte Mitte */
+    color: #ffffff;
+    z-index: 10;
+}
+
+/* Header */
+.left_text {
+    border-bottom: 2px solid #ffffff;
+    margin-bottom: 25px;
+    padding-bottom: 15px;
+}
+
+.left_text h1 {
+    font-size: 34px;
+    margin: 0;
+    text-transform: uppercase;
+    font-weight: 800;
+    letter-spacing: 1px;
+}
+
+.left_text p {
+    color: #a4a4a4;
+    margin: 0;
+    font-size: 13px;
+    text-transform: uppercase;
+}
+
+/* Inputs */
+.input-field {
+    margin-bottom: 18px;
+}
+
+.input-field p, .label-text {
+    color: #a4a4a4;
+    font-size: 11px;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    font-weight: 600;
+}
+
+input {
+    border: none !important;
+    width: 100%;
+    box-sizing: border-box;
+    height: 48px;
+    outline: none;
+    padding: 10px 15px;
+    color: #ffffff;
+    background: #1a1a1a !important; /* Etwas dunkler für mehr Kontrast */
+    border-radius: 0 !important;
+    font-family: "Montserrat", sans-serif;
+}
+
+/* Gender Selection */
+.radio-toolbar {
+    display: flex;
+    gap: 10px;
+    width: 100%;
+    margin-bottom: 20px;
+}
+
+.gender-option {
+    flex: 1;
+}
+
+.radio-toolbar input[type="radio"] {
+    display: none;
+}
+
+.radio-toolbar label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 55px;
+    background: #1a1a1a;
+    color: #666;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 12px;
+}
+
+/* AKTIVER STATUS: Damit man sieht, was ausgewählt ist */
+.radio-toolbar input[type="radio"]:checked + label {
+    background: #444444 !important;
+    color: #ffffff;
+    box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
+}
+
+/* Submit Button */
+#submit {
+    height: 60px;
+    width: 100%;
+    margin-top: 10px;
+    background: #2a2a2a;
+    color: #ffffff;
+    border: none !important;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    transition: background 0.3s;
+}
+
+#submit p {
+    margin: 0;
+    font-weight: 800;
+    font-size: 15px;
+}
+
+#submit:hover {
+    background: #383838;
+}
+
+/* Slogan mit Linien RECHTS und LINKS */
+.bottom-slogan {
+    margin-top: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    opacity: 0.6;
+}
+
+.bottom-slogan h3 {
+    margin: 0 20px;
+    color: #ffffff;
+    font-size: 10px;
+    white-space: nowrap;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+}
+
+.bottom-slogan .line {
+    height: 1px;
+    flex-grow: 1;
+    background: linear-gradient(to right, transparent, white, transparent);
+    opacity: 0.5;
+}
