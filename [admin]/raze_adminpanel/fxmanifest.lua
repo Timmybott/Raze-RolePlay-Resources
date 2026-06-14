@@ -6,3 +6,4 @@ description 'Sends live server status to the Admin Bot'
 version '1.0.0'
 
 server_script 'server.lua'
+client_script 'client.lua'

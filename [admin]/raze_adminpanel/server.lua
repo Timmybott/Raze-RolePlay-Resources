@@ -339,6 +339,101 @@ Citizen.CreateThread(function()
     end
 end)
 
+-- JOB-CREATOR: raze_job_data Tabelle + Sync + Schreiben (Phase 2) --
+local function ensureJobDataTable()
+    if not exports.oxmysql then return end
+    exports.oxmysql:query([[
+        CREATE TABLE IF NOT EXISTS raze_job_data (
+            job_name VARCHAR(64) NOT NULL,
+            data LONGTEXT,
+            PRIMARY KEY (job_name)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    ]], {}, function() end)
+end
+
+-- Inhalt von raze_job_data ans Panel senden (Zusatz-Daten je Job)
+local function syncJobDataToPanel()
+    if not exports.oxmysql then return end
+    exports.oxmysql:query('SELECT job_name, data FROM raze_job_data', {}, function(rows)
+        local map = {}
+        if rows then
+            for _, row in ipairs(rows) do
+                local ok, decoded = pcall(json.decode, row.data or '{}')
+                map[row.job_name] = (ok and decoded) or {}
+            end
+        end
+        PerformHttpRequest(SERVER_URL .. "/api/fivem/job_data", function() end, 'POST',
+            json.encode(map), apiHeaders())
+    end)
+end
+
+-- Job in ESX-Basis (jobs/job_grades) + raze_job_data schreiben
+local function saveJob(op)
+    if not exports.oxmysql then return end
+    local name = op.name
+    local label = op.label or name
+    local grades = op.grades or {}
+    local extra = op.extra or {}
+
+    -- jobs upsert
+    exports.oxmysql:update('INSERT INTO jobs (name, label) VALUES (?, ?) ON DUPLICATE KEY UPDATE label = VALUES(label)',
+        { name, label }, function()
+        -- Grades neu schreiben (alte entfernen, dann einfügen)
+        exports.oxmysql:update('DELETE FROM job_grades WHERE job_name = ?', { name }, function()
+            for _, g in ipairs(grades) do
+                exports.oxmysql:insert(
+                    'INSERT INTO job_grades (job_name, grade, name, label, salary, skin_male, skin_female) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    { name, g.grade, g.name or ('grade' .. g.grade), g.label or 'Grade', g.salary or 0, '{}', '{}' })
+            end
+            -- raze_job_data upsert
+            exports.oxmysql:update(
+                'INSERT INTO raze_job_data (job_name, data) VALUES (?, ?) ON DUPLICATE KEY UPDATE data = VALUES(data)',
+                { name, json.encode(extra) }, function()
+                    print('^2[RazeAdmin] Job gespeichert: ' .. name .. '^7')
+                    if ESX and ESX.RefreshJobs then pcall(function() ESX.RefreshJobs() end) end
+                    TriggerEvent('raze_jobscreator:reload')
+                    syncJobDataToPanel()
+                    sendJobsToPanel()
+                end)
+        end)
+    end)
+end
+
+local function deleteJob(op)
+    if not exports.oxmysql then return end
+    local name = op.name
+    if not name or name == '' or name == 'unemployed' then return end
+    exports.oxmysql:update('DELETE FROM job_grades WHERE job_name = ?', { name }, function()
+        exports.oxmysql:update('DELETE FROM jobs WHERE name = ?', { name }, function()
+            exports.oxmysql:update('DELETE FROM raze_job_data WHERE job_name = ?', { name }, function()
+                print('^3[RazeAdmin] Job gelöscht: ' .. name .. '^7')
+                if ESX and ESX.RefreshJobs then pcall(function() ESX.RefreshJobs() end) end
+                TriggerEvent('raze_jobscreator:reload')
+                syncJobDataToPanel()
+                sendJobsToPanel()
+            end)
+        end)
+    end)
+end
+
+local function handleJobDbOp(op)
+    if op.op == 'save' then saveJob(op)
+    elseif op.op == 'delete' then deleteJob(op) end
+end
+
+Citizen.CreateThread(function()
+    Citizen.Wait(9000)
+    ensureJobDataTable()
+    Citizen.Wait(1000)
+    syncJobDataToPanel()
+end)
+
+-- Position aus dem Spiel (/setjobloc) ans Panel weiterreichen
+RegisterNetEvent('raze_adminpanel:captureLocation', function(coords, label)
+    PerformHttpRequest(SERVER_URL .. "/api/fivem/job_location", function() end, 'POST',
+        json.encode({ coords = coords, label = label }), apiHeaders())
+end)
+
 -- PLAYER ACTIONS (Spieler-Editor im Panel) --
 -- ESX speichert den Identifier in der DB meist ohne "license:"-Präfix -> beide Formen abgleichen
 local function normalizeIdentifier(id)
@@ -885,6 +980,11 @@ Citizen.CreateThread(function()
                 if data and data.job_employee_requests then
                     for _, req in ipairs(data.job_employee_requests) do
                         handleJobEmployeesRequest(req)
+                    end
+                end
+                if data and data.job_db_ops then
+                    for _, op in ipairs(data.job_db_ops) do
+                        handleJobDbOp(op)
                     end
                 end
             end
