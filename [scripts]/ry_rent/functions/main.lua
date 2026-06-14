@@ -37,7 +37,14 @@ function rentVehicle(model, price, location, r,g,b)
 							SetVehicleCustomPrimaryColour(vehicle, r, g, b)
 							SetVehicleCustomSecondaryColour(vehicle, 0, 0, 0)
 
-							Options.vehicle.hash = vehicle  
+							-- raze_carstatus: gemietetes Fahrzeug dem Mieter zuordnen, damit nur er
+							-- es ab-/aufschließen kann (eindeutiges Kennzeichen + Registrierung)
+							local plate = ('RENT%05d'):format(math.random(0, 99999))
+							SetVehicleNumberPlateText(vehicle, plate)
+							Options.vehicle.plate = plate
+							TriggerServerEvent('raze_carstatus:register', plate)
+
+							Options.vehicle.hash = vehicle
 							Options.have_rented = true
 						end)
 
@@ -61,6 +68,10 @@ end
 
 function returnVehicle(player)
 	if IsPedSittingInVehicle(player, Options.vehicle.hash) then
+		if Options.vehicle.plate then
+			TriggerServerEvent('raze_carstatus:unregister', Options.vehicle.plate)
+			Options.vehicle.plate = nil
+		end
 		deleteVehicle(Options.vehicle.hash)
 
 		Options.vehicle.hash = nil
@@ -81,6 +92,11 @@ end
 
 function finishRent()
 	Notification(Config.Options.rentFinished)
+
+	if Options.vehicle.plate then
+		TriggerServerEvent('raze_carstatus:unregister', Options.vehicle.plate)
+		Options.vehicle.plate = nil
+	end
 
 	Options.have_rented = false
 	changeBlip(true)

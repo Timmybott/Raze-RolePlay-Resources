@@ -17,10 +17,14 @@ local function notify(msg, t)
     elseif lib then lib.notify({ description = msg, type = t or 'inform' }) end
 end
 
--- GTA-natives Hilfetext-Banner (oben links), wird je Frame im Marker gezeichnet
+-- Hilfetext-Banner (oben links) über ESX, wird je Frame im Marker gezeichnet
 local function drawHelp(msg)
-    AddTextEntry('rjc_help', msg)
-    DisplayHelpTextThisFrame('rjc_help', false)
+    if ESX and ESX.ShowHelpNotification then
+        ESX.ShowHelpNotification(msg, true, false)
+    else
+        AddTextEntry('rjc_help', msg)
+        DisplayHelpTextThisFrame('rjc_help', false)
+    end
 end
 
 local function hexToRgb(hex)
@@ -204,7 +208,7 @@ RegisterNetEvent('raze_jobscreator:enterVehicle', function(netId, deposit)
         tries = tries + 1
     end
     if veh and veh ~= 0 and DoesEntityExist(veh) then
-        SetVehicleNumberPlateText(veh, 'JOB ' .. math.random(100, 999))
+        -- Kennzeichen wird serverseitig gesetzt (für raze_carstatus); hier nur einsteigen
         SetPedIntoVehicle(PlayerPedId(), veh, -1)
         local msg = (deposit and deposit > 0) and ('Fahrzeug ausgegeben (Pfand ' .. deposit .. '$ hinterlegt).') or 'Fahrzeug ausgegeben.'
         notify(msg, 'success')

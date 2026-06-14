@@ -151,8 +151,14 @@ RegisterNetEvent('raze_jobscreator:takeVehicle', function(jobName, locType, locL
         return
     end
 
+    -- Eindeutiges Kennzeichen setzen + bei raze_carstatus als "geliehen" registrieren,
+    -- damit nur dieser Spieler das Fahrzeug ab-/aufschließen kann.
+    local plate = ('JOB%05d'):format(math.random(0, 99999))
+    SetVehicleNumberPlateText(veh, plate)
+    pcall(function() exports.raze_carstatus:Register(plate, xPlayer.identifier) end)
+
     local netId = NetworkGetNetworkIdFromEntity(veh)
-    jobVehicles[netId] = { deposit = deposit, owner = xPlayer.identifier }
+    jobVehicles[netId] = { deposit = deposit, owner = xPlayer.identifier, plate = plate }
     TriggerClientEvent('raze_jobscreator:enterVehicle', src, netId, deposit)
 end)
 
@@ -166,6 +172,7 @@ RegisterNetEvent('raze_jobscreator:parkVehicle', function(netId)
     end
     local veh = NetworkGetEntityFromNetworkId(netId)
     if veh and veh ~= 0 and DoesEntityExist(veh) then DeleteEntity(veh) end
+    if info.plate then pcall(function() exports.raze_carstatus:Unregister(info.plate) end) end
     if info.deposit and info.deposit > 0 and ESX then
         local xPlayer = ESX.GetPlayerFromId(src)
         if xPlayer then xPlayer.addMoney(info.deposit) end
