@@ -38,9 +38,10 @@ function rentVehicle(model, price, location, r,g,b)
 							SetVehicleCustomSecondaryColour(vehicle, 0, 0, 0)
 
 							-- raze_carstatus: gemietetes Fahrzeug dem Mieter zuordnen, damit nur er
-							-- es ab-/aufschließen kann (eindeutiges Kennzeichen + Registrierung)
-							local plate = ('RENT%05d'):format(math.random(0, 99999))
-							SetVehicleNumberPlateText(vehicle, plate)
+							-- es ab-/aufschließen kann. WICHTIG: Kennzeichen max. 8 Zeichen
+							-- (GTA kürzt sonst -> Mismatch). Tatsächliches Kennzeichen zurücklesen.
+							SetVehicleNumberPlateText(vehicle, ('RENT%04d'):format(math.random(0, 9999)))
+							local plate = (GetVehicleNumberPlateText(vehicle):gsub('^%s*(.-)%s*$', '%1'))
 							Options.vehicle.plate = plate
 							TriggerServerEvent('raze_carstatus:register', plate)
 

@@ -27,14 +27,20 @@ local function requestControl(veh)
     end
 end
 
--- Kurz hupen + Warnblinker einmal (Motorstatus bleibt unangetastet)
+-- Kurz hupen + Lichter einmal blinken (Motorstatus bleibt unangetastet).
+-- Scheinwerfer/Fernlicht werden kurz erzwungen, damit der Blitz AUCH bei
+-- ausgeschaltetem Motor sichtbar ist.
 local function lockEffects(veh)
     StartVehicleHorn(veh, 150, GetHashKey('HELDDOWN'), false)
-    SetVehicleIndicatorLights(veh, 0, true)  -- rechts
-    SetVehicleIndicatorLights(veh, 1, true)  -- links
+    SetVehicleLights(veh, 2)                 -- Scheinwerfer erzwingen
+    SetVehicleFullbeam(veh, true)            -- Fernlicht-Blitz
+    SetVehicleIndicatorLights(veh, 0, true)  -- Blinker rechts
+    SetVehicleIndicatorLights(veh, 1, true)  -- Blinker links
     CreateThread(function()
-        Wait(350)
+        Wait(400)
         if DoesEntityExist(veh) then
+            SetVehicleFullbeam(veh, false)
+            SetVehicleLights(veh, 0)         -- zurück auf automatisch (aus, wenn Motor aus)
             SetVehicleIndicatorLights(veh, 0, false)
             SetVehicleIndicatorLights(veh, 1, false)
         end
@@ -106,6 +112,15 @@ RegisterCommand('razecarengine', function()
     end
 end, false)
 RegisterKeyMapping('razecarengine', 'Motor an-/ausschalten', 'keyboard', 'M')
+
+-- Motor bleibt beim Aussteigen an (statt automatisch auszugehen).
+-- Wird regelmäßig neu gesetzt (Respawn/Ped-Wechsel).
+CreateThread(function()
+    while true do
+        SetPedConfigFlag(PlayerPedId(), 429, true)
+        Wait(4000)
+    end
+end)
 
 -- Verhindert, dass der Motor beim Gasgeben wieder anspringt
 CreateThread(function()
