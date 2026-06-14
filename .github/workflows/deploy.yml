@@ -11,18 +11,33 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      - name: Deploy via SFTP
-        uses: wlixcc/SFTP-Deploy-Action@v1.2.4
         with:
-          username: ${{ secrets.SFTP_USER }}
-          server: ${{ secrets.SFTP_HOST }}
-          port: ${{ secrets.SFTP_PORT }}
-          password: ${{ secrets.SFTP_PASSWORD }}
-          local_path: './'
-          remote_path: '/txData/ESXLegacy_7CCB6A.base/resources/'
-          sftp_only: true
-          args: '-r'
+          fetch-depth: 2
+
+      - name: Get changed files
+        id: changed
+        run: |
+          git diff --name-only HEAD~1 HEAD > changed_files.txt
+          cat changed_files.txt
+
+      - name: Upload changed files via SFTP
+        run: |
+          sudo apt-get install -y lftp
+
+          lftp -u "${{ secrets.SFTP_USER }}","${{ secrets.SFTP_PASSWORD }}" \
+            -p ${{ secrets.SFTP_PORT }} \
+            sftp://${{ secrets.SFTP_HOST }} <<EOF
+          set sftp:auto-confirm yes
+          set net:timeout 30
+
+          $(while IFS= read -r file; do
+            dir=$(dirname "$file")
+            echo "mkdir -p /txData/ESXLegacy_7CCB6A.base/resources/$dir"
+            echo "put $file -o /txData/ESXLegacy_7CCB6A.base/resources/$file"
+          done < changed_files.txt)
+
+          bye
+          EOF
 
       - name: Restart Pterodactyl Server
         run: |
