@@ -21,8 +21,14 @@ local function registerStashes()
             if loc.type == 'storage' or loc.type == 'armory' then
                 idx = idx + 1
                 local stashId = ('rjc_%s_%s_%d'):format(jobName, loc.type, idx)
-                -- job_only -> nur Mitglieder dieses Jobs (Grade >= 0); sonst offen
-                local groups = (loc.job_only == false) and nil or { [jobName] = 0 }
+                -- job_only -> nur Mitglieder dieses Jobs (Grade >= 0); sonst für alle offen.
+                -- WICHTIG: kein `x and nil or y`-Idiom (liefert bei nil immer y)!
+                local groups
+                if loc.job_only == false then
+                    groups = nil
+                else
+                    groups = { [jobName] = 0 }
+                end
                 pcall(function()
                     exports.ox_inventory:RegisterStash(
                         stashId,
@@ -92,35 +98,78 @@ local function findLocation(jobName, locType, label)
     return nil
 end
 
--- Fahrzeug-Shop / Garage: optionalen Preis abbuchen, dann Spawn beim Client auslösen
-RegisterNetEvent('raze_jobscreator:takeVehicle', function(jobName, locType, locLabel, model, price)
+-- Garage: Pfand abbuchen, Fahrzeug SERVERSEITIG (temporär) spawnen und tracken.
+-- Das Fahrzeug gehört dem Spieler NICHT dauerhaft – es wird nicht in der DB
+-- gespeichert. Beim Einparken wird das Pfand erstattet und das Auto gelöscht.
+local jobVehicles = {} -- netId -> { deposit = number, owner = identifier }
+
+local function notifyEsx(src, msg)
+    TriggerClientEvent('esx:showNotification', src, msg)
+end
+
+RegisterNetEvent('raze_jobscreator:takeVehicle', function(jobName, locType, locLabel, model)
     local src = source
     local loc = findLocation(jobName, locType, locLabel)
     if not loc then return end
     if not playerHasAccess(src, jobName, loc) then
-        TriggerClientEvent('ox_lib:notify', src, { type = 'error', description = 'Kein Zugriff auf diese Location.' })
+        notifyEsx(src, 'Kein Zugriff auf diese Garage.')
         return
     end
-    -- Modell + Preis gegen die gespeicherte Fahrzeugliste validieren (kein Client-Trust)
-    local allowed, realPrice = false, 0
+    -- Modell + Preis NUR aus der gespeicherten Liste (kein Client-Trust beim Preis)
+    local allowed, deposit = false, 0
     for _, v in ipairs(loc.vehicles or {}) do
-        if v.model == model then allowed = true; realPrice = tonumber(v.price) or 0; break end
+        if v.model == model then allowed = true; deposit = tonumber(v.price) or 0; break end
     end
     if not allowed then return end
+    if not ESX then return end
 
-    if realPrice > 0 and ESX then
-        local xPlayer = ESX.GetPlayerFromId(src)
-        if not xPlayer then return end
+    local xPlayer = ESX.GetPlayerFromId(src)
+    if not xPlayer then return end
+
+    -- Pfand abbuchen
+    if deposit > 0 then
         local cash = xPlayer.getMoney()
-        local bank = xPlayer.getAccount('bank') and xPlayer.getAccount('bank').money or 0
-        if cash >= realPrice then
-            xPlayer.removeMoney(realPrice)
-        elseif bank >= realPrice then
-            xPlayer.removeAccountMoney('bank', realPrice)
+        local bank = (xPlayer.getAccount('bank') and xPlayer.getAccount('bank').money) or 0
+        if cash >= deposit then
+            xPlayer.removeMoney(deposit)
+        elseif bank >= deposit then
+            xPlayer.removeAccountMoney('bank', deposit)
         else
-            TriggerClientEvent('ox_lib:notify', src, { type = 'error', description = 'Nicht genug Geld (' .. realPrice .. '$).' })
+            notifyEsx(src, ('Nicht genug Geld für das Pfand (%s$).'):format(deposit))
             return
         end
     end
-    TriggerClientEvent('raze_jobscreator:spawnVehicle', src, model, loc.coords)
+
+    -- Serverseitig spawnen (temporär)
+    local c = loc.coords or {}
+    local veh = CreateVehicleServerSetter(joaat(model), 'automobile', c.x or 0.0, c.y or 0.0, c.z or 0.0, (c.w or 0.0) + 0.0)
+    local tries = 0
+    while not DoesEntityExist(veh) and tries < 60 do Wait(10); tries = tries + 1 end
+    if not DoesEntityExist(veh) then
+        if deposit > 0 then xPlayer.addMoney(deposit) end -- Pfand zurück bei Fehlschlag
+        notifyEsx(src, 'Fahrzeug konnte nicht erstellt werden.')
+        return
+    end
+
+    local netId = NetworkGetNetworkIdFromEntity(veh)
+    jobVehicles[netId] = { deposit = deposit, owner = xPlayer.identifier }
+    TriggerClientEvent('raze_jobscreator:enterVehicle', src, netId, deposit)
+end)
+
+-- Einparken: getracktes Job-Fahrzeug löschen und Pfand erstatten
+RegisterNetEvent('raze_jobscreator:parkVehicle', function(netId)
+    local src = source
+    local info = jobVehicles[netId]
+    if not info then
+        notifyEsx(src, 'Das ist kein ausgeparktes Job-Fahrzeug.')
+        return
+    end
+    local veh = NetworkGetEntityFromNetworkId(netId)
+    if veh and veh ~= 0 and DoesEntityExist(veh) then DeleteEntity(veh) end
+    if info.deposit and info.deposit > 0 and ESX then
+        local xPlayer = ESX.GetPlayerFromId(src)
+        if xPlayer then xPlayer.addMoney(info.deposit) end
+    end
+    jobVehicles[netId] = nil
+    notifyEsx(src, info.deposit and info.deposit > 0 and ('Fahrzeug eingeparkt, Pfand (%s$) erstattet.'):format(info.deposit) or 'Fahrzeug eingeparkt.')
 end)

@@ -11,20 +11,16 @@ end
 local jobsData = {}
 local playerJob = { name = 'unemployed', grade = 0 }
 local blipHandles = {}
-local currentLoc = nil   -- aktuell angezeigte Location (für TextUI)
 
--- ESX-TextUI (Standard-Anzeige) statt ox_lib
-local function showText(msg)
-    if ESX and ESX.TextUI then ESX.TextUI(msg)
-    elseif GetResourceState('esx_textui') == 'started' then exports['esx_textui']:TextUI(msg) end
-end
-local function hideText()
-    if ESX and ESX.HideUI then ESX.HideUI()
-    elseif GetResourceState('esx_textui') == 'started' then exports['esx_textui']:HideUI() end
-end
 local function notify(msg, t)
     if ESX and ESX.ShowNotification then ESX.ShowNotification(msg)
     elseif lib then lib.notify({ description = msg, type = t or 'inform' }) end
+end
+
+-- GTA-natives Hilfetext-Banner (oben links), wird je Frame im Marker gezeichnet
+local function drawHelp(msg)
+    AddTextEntry('rjc_help', msg)
+    DisplayHelpTextThisFrame('rjc_help', false)
 end
 
 local function hexToRgb(hex)
@@ -32,6 +28,17 @@ local function hexToRgb(hex)
     hex = hex:gsub('#', '')
     if #hex < 6 then return 255, 78, 0 end
     return tonumber(hex:sub(1, 2), 16) or 255, tonumber(hex:sub(3, 4), 16) or 78, tonumber(hex:sub(5, 6), 16) or 0
+end
+
+-- Angepasste Marker-Farbe via ZSX_UIV2 (falls im Job aktiviert)
+local function getZsxColor()
+    if GetResourceState('ZSX_UIV2') ~= 'started' then return nil end
+    local ok, a, b, c = pcall(function() return exports['ZSX_UIV2']:GetColor(true) end)
+    if not ok then return nil end
+    if type(a) == 'number' and type(b) == 'number' and type(c) == 'number' then return a, b, c end
+    if type(a) == 'table' then return a.r or a[1] or 255, a.g or a[2] or 78, a.b or a[3] or 0 end
+    if type(a) == 'string' then return hexToRgb(a) end
+    return nil
 end
 
 local TYPE_TEXT = { storage = 'Lager öffnen', armory = 'Waffenlager öffnen', garage = 'Garage', cloakroom = 'Umkleide' }
@@ -73,14 +80,13 @@ local function openGarage(jobName, loc)
         if data.current.value == '__park__' then
             local veh = GetVehiclePedIsIn(PlayerPedId(), false)
             if veh ~= 0 then
-                ESX.Game.DeleteVehicle(veh)
-                notify('Fahrzeug eingeparkt.')
+                TriggerServerEvent('raze_jobscreator:parkVehicle', NetworkGetNetworkIdFromEntity(veh))
             else
                 notify('Du sitzt in keinem Fahrzeug.', 'error')
             end
             menu.close()
         else
-            TriggerServerEvent('raze_jobscreator:takeVehicle', jobName, loc.type, loc.label or '', data.current.value, data.current.price)
+            TriggerServerEvent('raze_jobscreator:takeVehicle', jobName, loc.type, loc.label or '', data.current.value)
             menu.close()
         end
     end, function(data, menu) menu.close() end)
@@ -107,14 +113,16 @@ local function interact(jobName, loc)
     elseif loc.type == 'cloakroom' then openCloakroom(loc) end
 end
 
--- --- Marker + Näherungs-TextUI (ein Loop, ESX-Style) ---
+-- --- Marker + Näherungs-Hilfetext (GTA-nativ) ---
 CreateThread(function()
     while true do
         local sleep = 1000
         local pc = GetEntityCoords(PlayerPedId())
         local nearest, nearestDist = nil, 999.0
         for jobName, extra in pairs(jobsData) do
-            local r, g, b = hexToRgb(extra.color)
+            local r, g, b
+            if extra.use_zsx_color then r, g, b = getZsxColor() end
+            if not r then r, g, b = hexToRgb(extra.color) end
             for _, loc in ipairs(extra.locations or {}) do
                 local c = loc.coords
                 if c and c.x then
@@ -132,16 +140,11 @@ CreateThread(function()
         end
 
         if nearest then
-            if currentLoc ~= nearest.loc then
-                showText('[E] ' .. (nearest.loc.label and nearest.loc.label or (TYPE_TEXT[nearest.loc.type] or 'Interagieren')))
-                currentLoc = nearest.loc
-            end
+            local label = nearest.loc.label and nearest.loc.label or (TYPE_TEXT[nearest.loc.type] or 'Interagieren')
+            drawHelp('~INPUT_CONTEXT~  ' .. label)
             if IsControlJustReleased(0, 38) then -- E
                 interact(nearest.job, nearest.loc)
             end
-        elseif currentLoc then
-            hideText()
-            currentLoc = nil
         end
 
         Wait(sleep)
@@ -190,18 +193,20 @@ CreateThread(function()
     buildBlips()
 end)
 
--- Job-Fahrzeug spawnen (vom Server bestätigt)
-RegisterNetEvent('raze_jobscreator:spawnVehicle', function(model, coords)
-    local hash = joaat(model)
-    RequestModel(hash)
-    local t = 0
-    while not HasModelLoaded(hash) and t < 100 do Wait(50); t = t + 1 end
-    if not HasModelLoaded(hash) then notify('Fahrzeugmodell konnte nicht geladen werden.', 'error') return end
-    local c = coords or {}
-    local px, py, pz = table.unpack(GetEntityCoords(PlayerPedId()))
-    local veh = CreateVehicle(hash, c.x or px, c.y or py, c.z or pz, c.w or 0.0, true, false)
-    SetModelAsNoLongerNeeded(hash)
-    SetVehicleNumberPlateText(veh, 'JOB ' .. math.random(100, 999))
-    SetPedIntoVehicle(PlayerPedId(), veh, -1)
-    notify('Fahrzeug ausgegeben.', 'success')
+-- Job-Fahrzeug (serverseitig gespawnt) betreten – Auto gehört dem Spieler NICHT,
+-- es ist nur temporär (Pfand wurde hinterlegt).
+RegisterNetEvent('raze_jobscreator:enterVehicle', function(netId, deposit)
+    local veh = NetworkGetEntityFromNetworkId(netId)
+    local tries = 0
+    while (not veh or veh == 0 or not DoesEntityExist(veh)) and tries < 100 do
+        Wait(20)
+        veh = NetworkGetEntityFromNetworkId(netId)
+        tries = tries + 1
+    end
+    if veh and veh ~= 0 and DoesEntityExist(veh) then
+        SetVehicleNumberPlateText(veh, 'JOB ' .. math.random(100, 999))
+        SetPedIntoVehicle(PlayerPedId(), veh, -1)
+        local msg = (deposit and deposit > 0) and ('Fahrzeug ausgegeben (Pfand ' .. deposit .. '$ hinterlegt).') or 'Fahrzeug ausgegeben.'
+        notify(msg, 'success')
+    end
 end)
