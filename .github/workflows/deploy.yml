@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Deploy via SFTP
         uses: wlixcc/SFTP-Deploy-Action@v1.2.4
@@ -19,8 +19,10 @@ jobs:
           server: ${{ secrets.SFTP_HOST }}
           port: ${{ secrets.SFTP_PORT }}
           password: ${{ secrets.SFTP_PASSWORD }}
-          local_path: './resources/*'
-          remote_path: '/resources/'
+          local_path: './'
+          remote_path: '/txData/ESXLegacy_7CCB6A.base/resources/'
+          sftp_only: true
+          args: '-r'
 
       - name: Restart Pterodactyl Server
         run: |
