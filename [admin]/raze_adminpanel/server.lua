@@ -261,7 +261,9 @@ local function collectJobsFromEsx()
                     for gradeKey, grade in pairs(job.grades) do
                         grades[#grades + 1] = {
                             grade = tonumber(grade.grade) or tonumber(gradeKey) or 0,
-                            label = grade.label or tostring(gradeKey)
+                            name = grade.name or tostring(gradeKey),
+                            label = grade.label or tostring(gradeKey),
+                            salary = tonumber(grade.salary) or 0
                         }
                     end
                 end
@@ -278,7 +280,7 @@ local function collectJobsFromDb(cb)
     if not exports.oxmysql then cb({}) return end
     exports.oxmysql:query('SELECT name, label FROM jobs', {}, function(jobRows)
         if not jobRows then cb({}) return end
-        exports.oxmysql:query('SELECT job_name, grade, label FROM job_grades', {}, function(gradeRows)
+        exports.oxmysql:query('SELECT job_name, grade, name, label, salary FROM job_grades', {}, function(gradeRows)
             local byName = {}
             local jobs = {}
             for _, row in ipairs(jobRows) do
@@ -292,7 +294,9 @@ local function collectJobsFromDb(cb)
                     if entry then
                         entry.grades[#entry.grades + 1] = {
                             grade = tonumber(g.grade) or 0,
-                            label = g.label or tostring(g.grade)
+                            name = g.name or tostring(g.grade),
+                            label = g.label or tostring(g.grade),
+                            salary = tonumber(g.salary) or 0
                         }
                     end
                 end
@@ -815,6 +819,46 @@ Citizen.CreateThread(function()
     end
 end)
 
+-- JOB-MITARBEITER: Panel fragt alle Mitarbeiter eines Jobs an --
+local function handleJobEmployeesRequest(req)
+    local jobName = req.job
+    local function post(data)
+        PerformHttpRequest(SERVER_URL .. "/api/fivem/job_employees", function() end, 'POST',
+            json.encode({ request_id = req.request_id, data = data }), apiHeaders())
+    end
+    if not jobName or not exports.oxmysql then
+        post({ job = jobName, employees = {} })
+        return
+    end
+    -- Online-Spieler nach (normalisiertem) Identifier indexieren
+    local online = {}
+    for _, pid in ipairs(GetPlayers()) do
+        for _, id in ipairs(GetPlayerIdentifiers(pid)) do
+            online[normalizeIdentifier(id)] = pid
+        end
+    end
+    exports.oxmysql:query(
+        'SELECT identifier, firstname, lastname, job_grade FROM users WHERE job = ?',
+        { jobName },
+        function(rows)
+            local employees = {}
+            if rows then
+                for _, row in ipairs(rows) do
+                    local sid = online[normalizeIdentifier(row.identifier)]
+                    employees[#employees + 1] = {
+                        identifier = row.identifier,
+                        name = (row.firstname or 'Unbekannt') .. ' ' .. (row.lastname or ''),
+                        grade = tonumber(row.job_grade) or 0,
+                        online = sid ~= nil,
+                        server_id = sid and tonumber(sid) or nil
+                    }
+                end
+            end
+            post({ job = jobName, employees = employees })
+        end
+    )
+end
+
 -- COMMAND POLLING --
 Citizen.CreateThread(function()
     while true do
@@ -836,6 +880,11 @@ Citizen.CreateThread(function()
                 if data and data.detail_requests then
                     for _, req in ipairs(data.detail_requests) do
                         handleDetailRequest(req)
+                    end
+                end
+                if data and data.job_employee_requests then
+                    for _, req in ipairs(data.job_employee_requests) do
+                        handleJobEmployeesRequest(req)
                     end
                 end
             end
