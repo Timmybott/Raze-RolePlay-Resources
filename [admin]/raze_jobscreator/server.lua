@@ -180,3 +180,101 @@ RegisterNetEvent('raze_jobscreator:parkVehicle', function(netId)
     jobVehicles[netId] = nil
     notifyEsx(src, info.deposit and info.deposit > 0 and ('Fahrzeug eingeparkt, Pfand (%s$) erstattet.'):format(info.deposit) or 'Fahrzeug eingeparkt.')
 end)
+
+-- ===================== F5-AKTIONSMENÜ (Phase 3) =====================
+-- Welche F5-Funktionen erlaubt der Job des Spielers? (aus raze_job_data -> extra.f5)
+local cuffed = {} -- [targetSrc] = true
+
+local function jobF5(src)
+    if not ESX then return {} end
+    local xP = ESX.GetPlayerFromId(src)
+    if not xP or not xP.job then return {} end
+    local extra = jobsData[xP.job.name]
+    return (extra and extra.f5) or {}
+end
+
+local function allowsF5(src, func)
+    return jobF5(src)[func] == true
+end
+
+local function playersNear(a, b, dist)
+    local pa, pb = GetPlayerPed(a), GetPlayerPed(b)
+    if not pa or pa == 0 or not pb or pb == 0 then return false end
+    return #(GetEntityCoords(pa) - GetEntityCoords(pb)) <= (dist or 5.0)
+end
+
+RegisterNetEvent('raze_jobscreator:f5:cuff', function(targetSrc)
+    local src = source
+    targetSrc = tonumber(targetSrc)
+    if not targetSrc or targetSrc == src then return end
+    if not allowsF5(src, 'cuff') then return end
+    if not playersNear(src, targetSrc, 4.0) then return end
+    cuffed[targetSrc] = true
+    TriggerClientEvent('raze_jobscreator:f5:setCuffed', targetSrc, true)
+    notifyEsx(src, 'Person gefesselt.')
+end)
+
+RegisterNetEvent('raze_jobscreator:f5:uncuff', function(targetSrc)
+    local src = source
+    targetSrc = tonumber(targetSrc)
+    if not targetSrc then return end
+    -- Entfesseln darf JEDER, dessen Job die Funktion erlaubt (jobunabhängig vom Fessler)
+    if not allowsF5(src, 'uncuff') then return end
+    if not cuffed[targetSrc] then notifyEsx(src, 'Diese Person ist nicht gefesselt.') return end
+    if not playersNear(src, targetSrc, 4.0) then return end
+    cuffed[targetSrc] = nil
+    TriggerClientEvent('raze_jobscreator:f5:setCuffed', targetSrc, false)
+    notifyEsx(src, 'Person entfesselt.')
+end)
+
+RegisterNetEvent('raze_jobscreator:f5:vehicle', function(targetSrc)
+    local src = source
+    targetSrc = tonumber(targetSrc)
+    if not targetSrc then return end
+    if not allowsF5(src, 'vehicle') then return end
+    if not cuffed[targetSrc] then notifyEsx(src, 'Nur gefesselte Personen.') return end
+    if not playersNear(src, targetSrc, 6.0) then return end
+    TriggerClientEvent('raze_jobscreator:f5:toggleVehicle', targetSrc)
+end)
+
+RegisterNetEvent('raze_jobscreator:f5:search', function(targetSrc)
+    local src = source
+    targetSrc = tonumber(targetSrc)
+    if not targetSrc then return end
+    if not allowsF5(src, 'search') then return end
+    if not playersNear(src, targetSrc, 4.0) then return end
+    pcall(function() exports.ox_inventory:forceOpenInventory(src, 'player', targetSrc) end)
+end)
+
+ESX.RegisterServerCallback('raze_jobscreator:f5:getLicenses', function(src, cb, targetSrc)
+    targetSrc = tonumber(targetSrc)
+    if not targetSrc or not allowsF5(src, 'licenses') then cb({}) return end
+    local xT = ESX.GetPlayerFromId(targetSrc)
+    if not xT or GetResourceState('oxmysql') ~= 'started' then cb({}) return end
+    exports.oxmysql:query('SELECT type FROM user_licenses WHERE owner = ?', { xT.identifier }, function(rows)
+        local list = {}
+        if rows then for _, r in ipairs(rows) do list[#list + 1] = r.type end end
+        cb(list)
+    end)
+end)
+
+-- Ausweis ansehen: zeigt dem anfragenden Spieler (src) den Ausweis des Ziels
+-- über jsfour-idcard. Event-Signatur: jsfour-idcard:open(ID, targetID, type)
+--   ID       = Spieler, dessen Ausweis angezeigt wird (das Ziel)
+--   targetID = Spieler, der den Ausweis SEHEN soll (der Anfragende)
+--   type     = nil -> kompletter Ausweis
+RegisterNetEvent('raze_jobscreator:f5:idcard', function(targetSrc)
+    local src = source
+    targetSrc = tonumber(targetSrc)
+    if not targetSrc or not allowsF5(src, 'idcard') then return end
+    if not playersNear(src, targetSrc, 4.0) then return end
+    if GetResourceState('jsfour-idcard') == 'started' then
+        TriggerEvent('jsfour-idcard:open', targetSrc, src, nil)
+    else
+        notifyEsx(src, 'jsfour-idcard ist nicht gestartet.')
+    end
+end)
+
+AddEventHandler('playerDropped', function()
+    cuffed[source] = nil
+end)

@@ -214,3 +214,141 @@ RegisterNetEvent('raze_jobscreator:enterVehicle', function(netId, deposit)
         notify(msg, 'success')
     end
 end)
+
+-- ===================== F5-AKTIONSMENÜ (Phase 3) =====================
+local isCuffed = false
+local cuffProp = nil
+
+local function getClosestPlayer(radius)
+    local ped = PlayerPedId()
+    local pc = GetEntityCoords(ped)
+    local closest, best = nil, (radius or 8.0)
+    for _, pid in ipairs(GetActivePlayers()) do
+        local tp = GetPlayerPed(pid)
+        if tp ~= ped and tp ~= 0 then
+            local d = #(pc - GetEntityCoords(tp))
+            if d <= best then closest, best = pid, d end
+        end
+    end
+    return closest and GetPlayerServerId(closest) or nil
+end
+
+local function f5Funcs()
+    local extra = jobsData[playerJob.name]
+    return (extra and extra.f5) or {}
+end
+
+local function needTarget()
+    local t = getClosestPlayer(8.0)
+    if not t then notify('Kein Spieler in der Nähe.', 'error') end
+    return t
+end
+
+local function showLicenses(targetSrc)
+    ESX.TriggerServerCallback('raze_jobscreator:f5:getLicenses', function(list)
+        local content = (list and #list > 0) and ('- ' .. table.concat(list, '  \n- ')) or 'Keine Lizenzen.'
+        lib.alertDialog({ header = 'Lizenzen', content = content, centered = true })
+    end, targetSrc)
+end
+
+local function openF5()
+    local f = f5Funcs()
+    local options = {}
+    if f.cuff then options[#options + 1] = { title = 'Fesseln', icon = 'handcuffs', onSelect = function() local t = needTarget(); if t then TriggerServerEvent('raze_jobscreator:f5:cuff', t) end end } end
+    if f.uncuff then options[#options + 1] = { title = 'Entfesseln', icon = 'unlock', onSelect = function() local t = needTarget(); if t then TriggerServerEvent('raze_jobscreator:f5:uncuff', t) end end } end
+    if f.drag then options[#options + 1] = { title = 'Draggen / Tragen', icon = 'person-walking', description = 'Nächste Person tragen (umschalten)', onSelect = function() ExecuteCommand('carry') end } end
+    if f.vehicle then options[#options + 1] = { title = 'In/aus Fahrzeug setzen', icon = 'car-side', description = 'Nur gefesselte Personen', onSelect = function() local t = needTarget(); if t then TriggerServerEvent('raze_jobscreator:f5:vehicle', t) end end } end
+    if f.search then options[#options + 1] = { title = 'Durchsuchen', icon = 'magnifying-glass', onSelect = function() local t = needTarget(); if t then TriggerServerEvent('raze_jobscreator:f5:search', t) end end } end
+    if f.idcard then options[#options + 1] = { title = 'Ausweis ansehen', icon = 'id-card', onSelect = function() local t = needTarget(); if t then TriggerServerEvent('raze_jobscreator:f5:idcard', t) end end } end
+    if f.licenses then options[#options + 1] = { title = 'Lizenzen ansehen', icon = 'file-contract', onSelect = function() local t = needTarget(); if t then showLicenses(t) end end } end
+
+    if #options == 0 then
+        notify('Dein Job hat keinen Zugriff auf das F5-Menü.', 'error')
+        return
+    end
+    lib.registerContext({ id = 'rjc_f5', title = 'Job-Aktionen', options = options })
+    lib.showContext('rjc_f5')
+end
+
+RegisterCommand('razejobf5', function() openF5() end, false)
+RegisterKeyMapping('razejobf5', 'Job-Aktionsmenü', 'keyboard', 'F5')
+
+-- --- Gefesselt-Status (auf dem Ziel-Client) ---
+local function applyCuff()
+    local ped = PlayerPedId()
+    RequestAnimDict('mp_arresting')
+    local t = 0
+    while not HasAnimDictLoaded('mp_arresting') and t < 50 do Wait(20); t = t + 1 end
+    TaskPlayAnim(ped, 'mp_arresting', 'idle', 8.0, -8.0, -1, 49, 0, false, false, false)
+    SetEnableHandcuffs(ped, true)
+    local model = joaat('prop_cs_cuffs')
+    RequestModel(model)
+    local t2 = 0
+    while not HasModelLoaded(model) and t2 < 50 do Wait(20); t2 = t2 + 1 end
+    if HasModelLoaded(model) then
+        cuffProp = CreateObject(model, 0.0, 0.0, 0.0, true, true, false)
+        AttachEntityToEntity(cuffProp, ped, GetPedBoneIndex(ped, 28422), 0.05, 0.0, -0.02, 0.0, 0.0, 0.0, false, false, false, false, 2, true)
+        SetModelAsNoLongerNeeded(model)
+    end
+    notify('Du wurdest gefesselt.', 'error')
+end
+
+local function removeCuff()
+    local ped = PlayerPedId()
+    ClearPedTasks(ped)
+    SetEnableHandcuffs(ped, false)
+    if cuffProp then DeleteObject(cuffProp); cuffProp = nil end
+    notify('Du wurdest entfesselt.', 'success')
+end
+
+RegisterNetEvent('raze_jobscreator:f5:setCuffed', function(state)
+    local newState = state and true or false
+    if newState == isCuffed then return end
+    isCuffed = newState
+    if isCuffed then applyCuff() else removeCuff() end
+end)
+
+-- Gefesselte vom Fessler ins nächste Fahrzeug setzen / herausholen
+RegisterNetEvent('raze_jobscreator:f5:toggleVehicle', function()
+    local ped = PlayerPedId()
+    if IsPedInAnyVehicle(ped, false) then
+        TaskLeaveVehicle(ped, GetVehiclePedIsIn(ped, false), 0)
+        return
+    end
+    local pc = GetEntityCoords(ped)
+    local target, best = nil, 6.0
+    for _, v in ipairs(GetGamePool('CVehicle')) do
+        local d = #(pc - GetEntityCoords(v))
+        if d < best then target, best = v, d end
+    end
+    if not target then return end
+    local seat = nil
+    for s = 0, GetVehicleMaxNumberOfPassengers(target) - 1 do
+        if IsVehicleSeatFree(target, s) then seat = s; break end
+    end
+    if seat then TaskWarpPedIntoVehicle(ped, target, seat) end
+end)
+
+-- Durchsetzung des Gefesselt-Zustands
+CreateThread(function()
+    while true do
+        local sleep = 500
+        if isCuffed then
+            sleep = 0
+            local ped = PlayerPedId()
+            DisableControlAction(0, 24, true)  -- Angriff
+            DisableControlAction(0, 25, true)  -- Zielen
+            DisableControlAction(0, 47, true)  -- Waffe
+            DisableControlAction(0, 23, true)  -- Fahrzeug betreten
+            DisableControlAction(0, 21, true)  -- Sprinten
+            DisableControlAction(0, 22, true)  -- Springen
+            DisableControlAction(0, 263, true) -- Nahkampf
+            if not IsPedInAnyVehicle(ped, false) then
+                if HasAnimDictLoaded('mp_arresting') and not IsEntityPlayingAnim(ped, 'mp_arresting', 'idle', 3) then
+                    TaskPlayAnim(ped, 'mp_arresting', 'idle', 8.0, -8.0, -1, 49, 0, false, false, false)
+                end
+            end
+        end
+        Wait(sleep)
+    end
+end)
