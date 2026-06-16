@@ -393,7 +393,11 @@ local function saveJob(op)
                     if ESX and ESX.RefreshJobs then pcall(function() ESX.RefreshJobs() end) end
                     TriggerEvent('raze_jobscreator:reload')
                     syncJobDataToPanel()
-                    sendJobsToPanel()
+                    -- ESX.RefreshJobs() laedt asynchron aus der DB; kurz warten, bevor
+                    -- wir die Liste senden, sonst liefert ESX.GetJobs() noch die alten
+                    -- Grades und das Panel cacht veraltete Daten (Bug: neue Job-
+                    -- Einstellungen erst nach manuellem Reload sichtbar).
+                    Citizen.SetTimeout(2000, sendJobsToPanel)
                 end)
         end)
     end)
@@ -410,7 +414,8 @@ local function deleteJob(op)
                 if ESX and ESX.RefreshJobs then pcall(function() ESX.RefreshJobs() end) end
                 TriggerEvent('raze_jobscreator:reload')
                 syncJobDataToPanel()
-                sendJobsToPanel()
+                -- s. saveJob: ESX.RefreshJobs() ist asynchron, daher verzögert senden
+                Citizen.SetTimeout(2000, sendJobsToPanel)
             end)
         end)
     end)
