@@ -52,10 +52,10 @@ local function toggleLock(veh)
     local locked = GetVehicleDoorLockStatus(veh) == 2
     if locked then
         SetVehicleDoorsLocked(veh, 1)
-        help('Fahrzeug ~g~aufgeschlossen')
+        help('Fahrzeug aufgeschlossen')
     else
         SetVehicleDoorsLocked(veh, 2)
-        help('Fahrzeug ~r~abgeschlossen')
+        help('Fahrzeug abgeschlossen')
     end
     lockEffects(veh)
 end
@@ -103,12 +103,12 @@ RegisterCommand('razecarengine', function()
         engineOff[veh] = true
         SetVehicleEngineOn(veh, false, true, true)
         SetVehicleLights(veh, 1) -- Lichter aus
-        help('Motor ~r~aus')
+        help('Motor aus')
     else
         engineOff[veh] = nil
         SetVehicleEngineOn(veh, true, false, true)
         SetVehicleLights(veh, 0) -- zurück auf automatisch
-        help('Motor ~g~an')
+        help('Motor an')
     end
 end, false)
 RegisterKeyMapping('razecarengine', 'Motor an-/ausschalten', 'keyboard', 'M')
