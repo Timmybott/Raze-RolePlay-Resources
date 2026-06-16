@@ -114,11 +114,14 @@ end, false)
 RegisterKeyMapping('razecarengine', 'Motor an-/ausschalten', 'keyboard', 'M')
 
 -- Motor bleibt beim Aussteigen an (statt automatisch auszugehen).
--- Wird regelmäßig neu gesetzt (Respawn/Ped-Wechsel).
+-- WICHTIG: Flag 241 = CPED_CONFIG_FLAG_LeaveEngineOnWhenExitingVehicles.
+-- (Flag 429 steuert nur das Anspringen beim EINsteigen und half hier nicht.)
+-- Wird regelmäßig neu gesetzt (Respawn/Ped-Wechsel), damit kein Zeitfenster
+-- entsteht, in dem das Flag nach einem Ped-Wechsel noch nicht aktiv ist.
 CreateThread(function()
     while true do
-        SetPedConfigFlag(PlayerPedId(), 429, true)
-        Wait(4000)
+        SetPedConfigFlag(PlayerPedId(), 241, true)
+        Wait(1000)
     end
 end)
 

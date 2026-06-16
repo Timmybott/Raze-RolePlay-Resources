@@ -795,6 +795,13 @@ local function executePlayerAction(action)
             local grade = math.floor(tonumber(params.grade) or 0)
             if job == "" then error("Kein Job angegeben") end
             xPlayer.setJob(job, grade)
+            -- Sofort in der DB persistieren: ESX speichert den Job sonst erst beim
+            -- periodischen Save/Logout, die Mitarbeiterliste liest aber direkt
+            -- users.job -> der Spieler bliebe sonst im alten Job hängen.
+            if exports.oxmysql then
+                exports.oxmysql:update('UPDATE users SET job = ?, job_grade = ? WHERE identifier = ?',
+                    { job, grade, xPlayer.identifier })
+            end
 
         elseif kind == "set_cash" then
             local amount = math.max(0, math.floor(tonumber(params.amount) or 0))
