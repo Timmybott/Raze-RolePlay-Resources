@@ -12,7 +12,7 @@ RegisterCommand('setjobloc', function(_, args)
         y = math.floor(c.y * 100 + 0.5) / 100,
         -- Z bewusst um 0.5 nach oben versetzen (eine halbe Stelle über der
         -- erfassten Position).
-        z = math.floor((c.z + 0.0) * 100 + 0.5) / 100,
+        z = math.floor((c.z - 0.5) * 100 + 0.5) / 100,
         w = math.floor(heading * 100 + 0.5) / 100
     }
     TriggerServerEvent('raze_adminpanel:captureLocation', coords, label)
