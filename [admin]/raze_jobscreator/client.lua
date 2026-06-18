@@ -70,7 +70,16 @@ end
 
 local function openGarage(jobName, loc)
     if not ESX then return end
-    local elements = { { label = 'Aktuelles Fahrzeug einparken', value = '__park__' } }
+
+    -- Sitzt der Spieler in einem Fahrzeug -> direkt einparken (kein Menü).
+    local veh = GetVehiclePedIsIn(PlayerPedId(), false)
+    if veh ~= 0 then
+        TriggerServerEvent('raze_jobscreator:parkVehicle', NetworkGetNetworkIdFromEntity(veh))
+        return
+    end
+
+    -- Sonst: Menü mit den Auspark-Optionen.
+    local elements = {}
     for _, v in ipairs(loc.vehicles or {}) do
         local price = tonumber(v.price) or 0
         elements[#elements + 1] = {
@@ -78,22 +87,16 @@ local function openGarage(jobName, loc)
             value = v.model, price = price
         }
     end
+    if #elements == 0 then
+        notify('Keine Fahrzeuge zum Ausparken hinterlegt.', 'error')
+        return
+    end
     ESX.UI.Menu.Open('default', GetCurrentResourceName(), 'rjc_garage', {
         title = loc.label or 'Garage', align = 'top-left', elements = elements
     }, function(data, menu)
-        if data.current.value == '__park__' then
-            local veh = GetVehiclePedIsIn(PlayerPedId(), false)
-            if veh ~= 0 then
-                TriggerServerEvent('raze_jobscreator:parkVehicle', NetworkGetNetworkIdFromEntity(veh))
-            else
-                notify('Du sitzt in keinem Fahrzeug.', 'error')
-            end
-            menu.close()
-        else
-            TriggerServerEvent('raze_jobscreator:takeVehicle', jobName, loc.type, loc.label or '', data.current.value)
-            menu.close()
-        end
-    end, function(data, menu) menu.close() end)
+        TriggerServerEvent('raze_jobscreator:takeVehicle', jobName, loc.type, loc.label or '', data.current.value)
+        menu.close()
+    end, function(_, menu) menu.close() end)
 end
 
 local function openCloakroom(_)
@@ -144,10 +147,15 @@ CreateThread(function()
         end
 
         if nearest then
-            local label = nearest.loc.label and nearest.loc.label or (TYPE_TEXT[nearest.loc.type] or 'Interagieren')
+            local loc = nearest.loc
+            local label = (loc.label and loc.label ~= '') and loc.label or (TYPE_TEXT[loc.type] or 'Interagieren')
+            -- Garage + im Fahrzeug -> Hinweis aufs direkte Einparken
+            if loc.type == 'garage' and GetVehiclePedIsIn(PlayerPedId(), false) ~= 0 then
+                label = 'Fahrzeug einparken'
+            end
             drawHelp('~INPUT_CONTEXT~  ' .. label)
             if IsControlJustReleased(0, 38) then -- E
-                interact(nearest.job, nearest.loc)
+                interact(nearest.job, loc)
             end
         end
 
