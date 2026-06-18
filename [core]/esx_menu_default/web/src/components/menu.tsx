@@ -99,15 +99,15 @@ const Menu: React.FC<Props> = ({ data }) => {
 
   return (
     <div className={`absolute ${GetPosition(data.align)}`}>
-      <div className="w-[26rem] h-fit max-h-[42rem] bg-[#161616] p-4 rounded-[10px] flex flex-col gap-4">
+      <div className="w-[26rem] h-fit max-h-[42rem] bg-[#0c0c0c]/95 border border-white/10 shadow-2xl p-4 rounded-[14px] flex flex-col gap-4">
         <div className="flex justify-between items-center">
           <h1
-            className="font-bold uppercase text-xl my-2 text-neutral-100"
+            className="font-bold uppercase tracking-wide text-xl my-2 text-neutral-100"
             dangerouslySetInnerHTML={{ __html: data.title }}
           />
           <img
             className="h-10"
-            src="https://media.discordapp.net/attachments/1370464258382368918/1409914889174257724/esxLogo-sNwPFb_p.png?ex=68af1d10&is=68adcb90&hm=5ce71e8e56c92753b9718188e2c930fb1682d1debae6a63d7ff6b255d2c6ce55&=&format=webp&quality=lossless&width=350&height=350"
+            src="https://razerp.spcfy.eu/assets/RazeRoleplayPBTransparent.png"
             alt=""
           />
         </div>

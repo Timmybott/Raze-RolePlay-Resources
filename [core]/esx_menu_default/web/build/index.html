@@ -9,11 +9,47 @@
   <title>ESX Menu Default</title>
   <script type="module" crossorigin src="./assets/index-CALLEhQl.js"></script>
   <link rel="stylesheet" crossorigin href="./assets/index-DB0yiboF.css">
+
+  <!-- ===== Raze RolePlay Theme-Override =====
+       Wirkt ohne Rebuild (gewinnt per #root-Spezifität nach dem Haupt-CSS).
+       Die Quell-Variante (für einen späteren Vite-Rebuild) steht in
+       web/src/index.css, components/menu.tsx und components/menu-button.tsx. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap">
+  <style>
+    :root { font-family: "Outfit", sans-serif !important; }
+    /* Menü-Karte: nahezu schwarz, feiner Rand, abgerundet, weicher Schatten */
+    #root .bg-\[\#161616\] {
+      background: rgba(12, 12, 12, .94) !important;
+      border: 1px solid hsla(0, 0%, 100%, .08) !important;
+      box-shadow: 0 18px 50px rgba(0, 0, 0, .55) !important;
+    }
+    #root .rounded-\[10px\] { border-radius: 14px !important; }
+    #root h1 { letter-spacing: .04em !important; }
+    /* ESX-Logo durch Raze-Logo ersetzen */
+    #root img.h-10 {
+      content: url("https://razerp.spcfy.eu/assets/RazeRoleplayPBTransparent.png") !important;
+      object-fit: contain !important;
+    }
+    /* Einträge */
+    #root .rounded-\[4px\] { border-radius: 10px !important; }
+    #root .bg-\[\#252525\] {
+      background: hsla(0, 0%, 100%, .04) !important;
+      border-color: hsla(0, 0%, 100%, .06) !important;
+    }
+    /* Aktiver Eintrag: Orange-Akzent #ff4e00 statt ESX-Amber */
+    #root .bg-\[\#FB9B041A\] { background: rgba(255, 78, 0, .12) !important; }
+    #root .border-\[\#FB9B04\] { border-color: #ff4e00 !important; }
+    #root .text-\[\#FB9B04\] { color: #ff4e00 !important; }
+    #root .border-\[\#FB9B04\] svg { color: #ff4e00 !important; stroke: #ff4e00 !important; }
+    #root .border-\[\#FB9B04\] .svg-inline--fa { color: #ff4e00 !important; }
+  </style>
 </head>
 
 <body>
   <div id="root"></div>
-
+
 </body>
 
 </html>

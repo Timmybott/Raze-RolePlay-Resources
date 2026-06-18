@@ -70,7 +70,7 @@ end
 
 local function openGarage(jobName, loc)
     if not ESX then return end
-    local elements = { { label = '~r~Aktuelles Fahrzeug einparken', value = '__park__' } }
+    local elements = { { label = 'Aktuelles Fahrzeug einparken', value = '__park__' } }
     for _, v in ipairs(loc.vehicles or {}) do
         local price = tonumber(v.price) or 0
         elements[#elements + 1] = {
@@ -246,28 +246,57 @@ end
 
 local function showLicenses(targetSrc)
     ESX.TriggerServerCallback('raze_jobscreator:f5:getLicenses', function(list)
-        local content = (list and #list > 0) and ('- ' .. table.concat(list, '  \n- ')) or 'Keine Lizenzen.'
-        lib.alertDialog({ header = 'Lizenzen', content = content, centered = true })
+        local elements = {}
+        if list and #list > 0 then
+            for _, lic in ipairs(list) do elements[#elements + 1] = { label = lic, value = lic } end
+        else
+            elements[#elements + 1] = { label = 'Keine Lizenzen.', value = 'none' }
+        end
+        ESX.UI.Menu.Open('default', GetCurrentResourceName(), 'rjc_licenses', {
+            title = 'Lizenzen', align = 'top-left', elements = elements
+        }, function(_, menu) menu.close() end, function(_, menu) menu.close() end)
     end, targetSrc)
 end
 
 local function openF5()
     local f = f5Funcs()
-    local options = {}
-    if f.cuff then options[#options + 1] = { title = 'Fesseln', icon = 'handcuffs', onSelect = function() local t = needTarget(); if t then TriggerServerEvent('raze_jobscreator:f5:cuff', t) end end } end
-    if f.uncuff then options[#options + 1] = { title = 'Entfesseln', icon = 'unlock', onSelect = function() local t = needTarget(); if t then TriggerServerEvent('raze_jobscreator:f5:uncuff', t) end end } end
-    if f.drag then options[#options + 1] = { title = 'Draggen / Tragen', icon = 'person-walking', description = 'Nächste Person tragen (umschalten)', onSelect = function() ExecuteCommand('carry') end } end
-    if f.vehicle then options[#options + 1] = { title = 'In/aus Fahrzeug setzen', icon = 'car-side', description = 'Nur gefesselte Personen', onSelect = function() local t = needTarget(); if t then TriggerServerEvent('raze_jobscreator:f5:vehicle', t) end end } end
-    if f.search then options[#options + 1] = { title = 'Durchsuchen', icon = 'magnifying-glass', onSelect = function() local t = needTarget(); if t then TriggerServerEvent('raze_jobscreator:f5:search', t) end end } end
-    if f.idcard then options[#options + 1] = { title = 'Ausweis ansehen', icon = 'id-card', onSelect = function() local t = needTarget(); if t then TriggerServerEvent('raze_jobscreator:f5:idcard', t) end end } end
-    if f.licenses then options[#options + 1] = { title = 'Lizenzen ansehen', icon = 'file-contract', onSelect = function() local t = needTarget(); if t then showLicenses(t) end end } end
+    local elements = {}
+    if f.cuff then elements[#elements + 1] = { label = 'Fesseln', value = 'cuff' } end
+    if f.uncuff then elements[#elements + 1] = { label = 'Entfesseln', value = 'uncuff' } end
+    if f.drag then elements[#elements + 1] = { label = 'Draggen / Tragen', value = 'drag' } end
+    if f.vehicle then elements[#elements + 1] = { label = 'In/aus Fahrzeug setzen', value = 'vehicle' } end
+    if f.search then elements[#elements + 1] = { label = 'Durchsuchen', value = 'search' } end
+    if f.idcard then elements[#elements + 1] = { label = 'Ausweis ansehen', value = 'idcard' } end
+    if f.licenses then elements[#elements + 1] = { label = 'Lizenzen ansehen', value = 'licenses' } end
 
-    if #options == 0 then
+    if #elements == 0 then
         notify('Dein Job hat keinen Zugriff auf das F5-Menü.', 'error')
         return
     end
-    lib.registerContext({ id = 'rjc_f5', title = 'Job-Aktionen', options = options })
-    lib.showContext('rjc_f5')
+
+    ESX.UI.Menu.Open('default', GetCurrentResourceName(), 'rjc_f5', {
+        title = 'Job-Aktionen', align = 'top-left', elements = elements
+    }, function(data, menu)
+        local v = data.current.value
+        menu.close()
+        if v == 'drag' then
+            ExecuteCommand('carry')
+        elseif v == 'licenses' then
+            local t = needTarget(); if t then showLicenses(t) end
+        else
+            local t = needTarget()
+            if t then
+                if v == 'cuff' then TriggerServerEvent('raze_jobscreator:f5:cuff', t)
+                elseif v == 'uncuff' then TriggerServerEvent('raze_jobscreator:f5:uncuff', t)
+                elseif v == 'vehicle' then TriggerServerEvent('raze_jobscreator:f5:vehicle', t)
+                elseif v == 'search' then TriggerServerEvent('raze_jobscreator:f5:search', t)
+                elseif v == 'idcard' then TriggerServerEvent('raze_jobscreator:f5:idcard', t)
+                end
+            end
+        end
+    end, function(_, menu)
+        menu.close()
+    end)
 end
 
 RegisterCommand('razejobf5', function() openF5() end, false)
