@@ -7,6 +7,24 @@
   <link rel="icon" type="image/svg+xml" href="/src/favicon.svg" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ESX Menu Default</title>
+  <script>
+    // Raze: pro-Spieler-Akzentfarbe (kommt vom Menü-Client via data.razeAccent aus ZSX_UIV2)
+    (function () {
+      function applyAccent(hex) {
+        if (typeof hex !== "string") return;
+        var m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
+        if (!m) return;
+        var n = parseInt(m[1], 16), r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+        var s = document.documentElement.style;
+        s.setProperty("--raze-accent", "#" + m[1]);
+        s.setProperty("--raze-accent-soft", "rgba(" + r + "," + g + "," + b + ",.14)");
+      }
+      window.addEventListener("message", function (e) {
+        var d = e && e.data;
+        if (d && d.action === "openMenu" && d.data && d.data.razeAccent) applyAccent(d.data.razeAccent);
+      });
+    })();
+  </script>
 </head>
 
 <body>

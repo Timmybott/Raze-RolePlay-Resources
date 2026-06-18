@@ -1,12 +1,39 @@
 local GUI, MenuType, OpenedMenus, CurrentNameSpace = {}, "default", 0, nil
 GUI.Time = 0
 
+-- Raze: Akzentfarbe des Menüs = die pro Spieler in ZSX_UIV2 eingestellte Farbe
+-- (Fallback Orange #ff4e00). Wird beim Öffnen an die NUI mitgeschickt.
+local function getRazeAccent()
+    if GetResourceState('ZSX_UIV2') == 'started' then
+        local ok, a, b, c = pcall(function() return exports['ZSX_UIV2']:GetColor(true) end)
+        if ok then
+            if type(a) == 'string' and a ~= '' then
+                return (a:sub(1, 1) == '#') and a or ('#' .. a)
+            end
+            local r, g, bl
+            if type(a) == 'number' and type(b) == 'number' and type(c) == 'number' then
+                r, g, bl = a, b, c
+            elseif type(a) == 'table' then
+                r, g, bl = a.r or a[1], a.g or a[2], a.b or a[3]
+            end
+            if r and g and bl then
+                return string.format('#%02x%02x%02x',
+                    math.floor(tonumber(r) or 255) % 256,
+                    math.floor(tonumber(g) or 78) % 256,
+                    math.floor(tonumber(bl) or 0) % 256)
+            end
+        end
+    end
+    return '#ff4e00'
+end
+
 local function openMenu(namespace, name, data)
     CurrentNameSpace = namespace
     OpenedMenus = OpenedMenus + 1
 
     data.namespace = namespace
     data.name = name
+    data.razeAccent = getRazeAccent()
 
     SendNUIMessage({
         action = "openMenu",

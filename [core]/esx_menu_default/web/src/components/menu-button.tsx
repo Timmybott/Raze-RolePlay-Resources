@@ -10,9 +10,10 @@ interface Props {
 const MenuButton: React.FC<Props> = ({ element, isSelected }) => {
   const { label, description, icon, usable, disableRightArrow, unselectable } =
     element;
-  const base = "rounded-[10px] flex items-center p-4 gap-4 justify-between";
+  const base = "rounded-none flex items-center p-4 gap-4 justify-between";
+  const accent = "var(--raze-accent, #ff4e00)";
   const sel = isSelected
-    ? "bg-[#ff4e001F] border border-[#ff4e00]"
+    ? "bg-[var(--raze-accent-soft)] border border-[var(--raze-accent)]"
     : "bg-white/[0.04] border border-white/[0.06]";
 
   const unSelectable = unselectable ? "opacity-80" : "";
@@ -24,7 +25,7 @@ const MenuButton: React.FC<Props> = ({ element, isSelected }) => {
           <FontAwesomeIcon
             className="size-6"
             icon={icon}
-            color={isSelected ? "#ff4e00" : undefined}
+            color={isSelected ? accent : undefined}
           />
         )}
 
@@ -33,13 +34,13 @@ const MenuButton: React.FC<Props> = ({ element, isSelected }) => {
             <>
               <p
                 className={`font-semibold ${
-                  isSelected ? "text-[#ff4e00]" : "text-neutral-100"
+                  isSelected ? "text-[var(--raze-accent)]" : "text-neutral-100"
                 }`}
                 dangerouslySetInnerHTML={{ __html: label }}
               />
               <p
                 className={`text-sm font-normal ${
-                  isSelected ? "text-[#ff4e00]" : "text-neutral-200"
+                  isSelected ? "text-[var(--raze-accent)]" : "text-neutral-200"
                 }`}
                 dangerouslySetInnerHTML={{ __html: description }}
               />
@@ -47,7 +48,7 @@ const MenuButton: React.FC<Props> = ({ element, isSelected }) => {
           ) : (
             <p
               className={`text-sm font-normal ${
-                isSelected ? "text-[#ff4e00]" : "text-neutral-200"
+                isSelected ? "text-[var(--raze-accent)]" : "text-neutral-200"
               }`}
               dangerouslySetInnerHTML={{ __html: label }}
             />
@@ -58,7 +59,7 @@ const MenuButton: React.FC<Props> = ({ element, isSelected }) => {
       {usable !== false &&
         disableRightArrow !== true &&
         unselectable !== true && (
-          <ArrowRight color={isSelected ? "#ff4e00" : "white"} size="1.6rem" />
+          <ArrowRight color={isSelected ? accent : "white"} size="1.6rem" />
         )}
     </div>
   );

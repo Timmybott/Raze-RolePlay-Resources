@@ -18,33 +18,55 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap">
   <style>
-    :root { font-family: "Outfit", sans-serif !important; }
-    /* Menü-Karte: nahezu schwarz, feiner Rand, abgerundet, weicher Schatten */
+    :root {
+      font-family: "Outfit", sans-serif !important;
+      --raze-accent: #ff4e00;                 /* Fallback; pro Spieler via ZSX überschrieben */
+      --raze-accent-soft: rgba(255, 78, 0, .14);
+    }
+    /* Menü-Karte: nahezu schwarz, feiner Rand, KANTIG (kein Radius), weicher Schatten */
     #root .bg-\[\#161616\] {
       background: rgba(12, 12, 12, .94) !important;
       border: 1px solid hsla(0, 0%, 100%, .08) !important;
       box-shadow: 0 18px 50px rgba(0, 0, 0, .55) !important;
     }
-    #root .rounded-\[10px\] { border-radius: 14px !important; }
+    #root .rounded-\[10px\] { border-radius: 0 !important; }
     #root h1 { letter-spacing: .04em !important; }
     /* ESX-Logo durch Raze-Logo ersetzen */
     #root img.h-10 {
       content: url("https://razerp.spcfy.eu/assets/RazeRoleplayPBTransparent.png") !important;
       object-fit: contain !important;
     }
-    /* Einträge */
-    #root .rounded-\[4px\] { border-radius: 10px !important; }
+    /* Einträge (kantig) */
+    #root .rounded-\[4px\] { border-radius: 0 !important; }
     #root .bg-\[\#252525\] {
       background: hsla(0, 0%, 100%, .04) !important;
       border-color: hsla(0, 0%, 100%, .06) !important;
     }
-    /* Aktiver Eintrag: Orange-Akzent #ff4e00 statt ESX-Amber */
-    #root .bg-\[\#FB9B041A\] { background: rgba(255, 78, 0, .12) !important; }
-    #root .border-\[\#FB9B04\] { border-color: #ff4e00 !important; }
-    #root .text-\[\#FB9B04\] { color: #ff4e00 !important; }
-    #root .border-\[\#FB9B04\] svg { color: #ff4e00 !important; stroke: #ff4e00 !important; }
-    #root .border-\[\#FB9B04\] .svg-inline--fa { color: #ff4e00 !important; }
+    /* Aktiver Eintrag: Akzent = pro Spieler eingestellte ZSX-Farbe (Fallback Orange) */
+    #root .bg-\[\#FB9B041A\] { background: var(--raze-accent-soft) !important; }
+    #root .border-\[\#FB9B04\] { border-color: var(--raze-accent) !important; }
+    #root .text-\[\#FB9B04\] { color: var(--raze-accent) !important; }
+    #root .border-\[\#FB9B04\] svg { color: var(--raze-accent) !important; stroke: var(--raze-accent) !important; }
+    #root .border-\[\#FB9B04\] .svg-inline--fa { color: var(--raze-accent) !important; }
   </style>
+  <script>
+    // Raze: pro-Spieler-Akzentfarbe (kommt vom Menü-Client via data.razeAccent aus ZSX_UIV2)
+    (function () {
+      function applyAccent(hex) {
+        if (typeof hex !== "string") return;
+        var m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
+        if (!m) return;
+        var n = parseInt(m[1], 16), r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+        var s = document.documentElement.style;
+        s.setProperty("--raze-accent", "#" + m[1]);
+        s.setProperty("--raze-accent-soft", "rgba(" + r + "," + g + "," + b + ",.14)");
+      }
+      window.addEventListener("message", function (e) {
+        var d = e && e.data;
+        if (d && d.action === "openMenu" && d.data && d.data.razeAccent) applyAccent(d.data.razeAccent);
+      });
+    })();
+  </script>
 </head>
 
 <body>

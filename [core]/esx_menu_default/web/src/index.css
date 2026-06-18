@@ -97,6 +97,8 @@
 
 :root {
   font-family: "Outfit", sans-serif !important;
+  --raze-accent: #ff4e00; /* Fallback; pro Spieler via ZSX_UIV2 überschrieben (siehe index.html-Script) */
+  --raze-accent-soft: rgba(255, 78, 0, .14);
   text-rendering: optimizeLegibility !important;
   -webkit-font-smoothing: antialiased !important;
   -moz-osx-font-smoothing: grayscale !important;

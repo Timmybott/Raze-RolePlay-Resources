@@ -99,7 +99,7 @@ const Menu: React.FC<Props> = ({ data }) => {
 
   return (
     <div className={`absolute ${GetPosition(data.align)}`}>
-      <div className="w-[26rem] h-fit max-h-[42rem] bg-[#0c0c0c]/95 border border-white/10 shadow-2xl p-4 rounded-[14px] flex flex-col gap-4">
+      <div className="w-[26rem] h-fit max-h-[42rem] bg-[#0c0c0c]/95 border border-white/10 shadow-2xl p-4 rounded-none flex flex-col gap-4">
         <div className="flex justify-between items-center">
           <h1
             className="font-bold uppercase tracking-wide text-xl my-2 text-neutral-100"
