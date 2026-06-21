@@ -1,69 +1,69 @@
-#name: Deploy Resources & Restart Server
-#
-#on:
-#  push:
-#    branches:
-#      - main
-#
-#jobs:
-#  deploy-and-restart:
-#    runs-on: ubuntu-latest
-#    steps:
-#      - name: Checkout Repository
-#        uses: actions/checkout@v4
-#        with:
-#          fetch-depth: 2
-#
-#      - name: Get changed files
-#        id: changed
-#        run: |
-#          # Absichern falls kein vorheriger Commit existiert (z.B. erster Push)
-#          if git rev-parse HEAD~1 > /dev/null 2>&1; then
-#            BASE="HEAD~1"
-#          else
-#            BASE=$(git hash-object -t tree /dev/null)  # leerer Tree
-#          fi
-#
-#          # Hinzugefügte & geänderte Dateien
-#          git diff --name-only --diff-filter=AM "$BASE" HEAD > changed_files.txt
-#
-#          # Gelöschte Dateien
-#          git diff --name-only --diff-filter=D "$BASE" HEAD > deleted_files.txt
-#
-#          # Renames: alten Namen löschen, neuen Namen hochladen
-#          git diff --name-only --diff-filter=R "$BASE" HEAD > renamed_new.txt
-#          git diff --diff-filter=R --name-status "$BASE" HEAD | awk '{print $2}' > renamed_old.txt
-#
-#          echo "=== Neu/Geändert ===" && cat changed_files.txt
-#          echo "=== Gelöscht ===" && cat deleted_files.txt
-#          echo "=== Umbenannt (neu) ===" && cat renamed_new.txt
-#          echo "=== Umbenannt (alt, wird gelöscht) ===" && cat renamed_old.txt
-#
-#      - name: Upload changed files & delete removed files via SFTP
-#        run: |
-#          sudo apt-get install -y lftp
-#
-#          lftp -u "${{ secrets.SFTP_USER }}","${{ secrets.SFTP_PASSWORD }}" \
-#            -p ${{ secrets.SFTP_PORT }} \
-#            sftp://${{ secrets.SFTP_HOST }} <<EOF
-#          set sftp:auto-confirm yes
-#          set net:timeout 30
-#
-#          $(while IFS= read -r file; do
-#            [ -z "$file" ] && continue
-#            dir=$(dirname "$file")
-#            echo "mkdir -p /txData/ESXLegacy_7CCB6A.base/resources/$dir"
-#            echo "put $file -o /txData/ESXLegacy_7CCB6A.base/resources/$file"
-#          done < <(cat changed_files.txt renamed_new.txt))
-#
-#          $(while IFS= read -r file; do
-#            [ -z "$file" ] && continue
-#            echo "rm /txData/ESXLegacy_7CCB6A.base/resources/$file"
-#          done < <(cat deleted_files.txt renamed_old.txt))
-#
-#          bye
-#          EOF
-#
+name: Deploy Resources & Restart Server
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy-and-restart:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Get changed files
+        id: changed
+        run: |
+          # Absichern falls kein vorheriger Commit existiert (z.B. erster Push)
+          if git rev-parse HEAD~1 > /dev/null 2>&1; then
+            BASE="HEAD~1"
+          else
+            BASE=$(git hash-object -t tree /dev/null)  # leerer Tree
+          fi
+
+          # Hinzugefügte & geänderte Dateien
+          git diff --name-only --diff-filter=AM "$BASE" HEAD > changed_files.txt
+
+          # Gelöschte Dateien
+          git diff --name-only --diff-filter=D "$BASE" HEAD > deleted_files.txt
+
+          # Renames: alten Namen löschen, neuen Namen hochladen
+          git diff --name-only --diff-filter=R "$BASE" HEAD > renamed_new.txt
+          git diff --diff-filter=R --name-status "$BASE" HEAD | awk '{print $2}' > renamed_old.txt
+
+          echo "=== Neu/Geändert ===" && cat changed_files.txt
+          echo "=== Gelöscht ===" && cat deleted_files.txt
+          echo "=== Umbenannt (neu) ===" && cat renamed_new.txt
+          echo "=== Umbenannt (alt, wird gelöscht) ===" && cat renamed_old.txt
+
+      - name: Upload changed files & delete removed files via SFTP
+        run: |
+          sudo apt-get install -y lftp
+
+          lftp -u "${{ secrets.SFTP_USER }}","${{ secrets.SFTP_PASSWORD }}" \
+            -p ${{ secrets.SFTP_PORT }} \
+            sftp://${{ secrets.SFTP_HOST }} <<EOF
+          set sftp:auto-confirm yes
+          set net:timeout 30
+
+          $(while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            dir=$(dirname "$file")
+            echo "mkdir -p /txData/ESXLegacy_7CCB6A.base/resources/$dir"
+            echo "put $file -o /txData/ESXLegacy_7CCB6A.base/resources/$file"
+          done < <(cat changed_files.txt renamed_new.txt))
+
+          $(while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            echo "rm /txData/ESXLegacy_7CCB6A.base/resources/$file"
+          done < <(cat deleted_files.txt renamed_old.txt))
+
+          bye
+          EOF
+
 #      - name: Restart Pterodactyl Server
 #        run: |
 #          curl -X POST "https://panel.spaceify.eu/api/client/servers/7ed1d988/power" \
