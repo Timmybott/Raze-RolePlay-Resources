@@ -55,8 +55,7 @@ Locales["en"] = {
   timingToolReset = "RESET",
   noPresetSelected = "No Preset Selected",
   applyTemporarily = "Apply temporarily (until vehicle despawns)",
-  applyToPlate = "Apply to this vehicle plate always (store in DB)",
-  applyToModel = "Apply to all vehicles of this model always (store in DB)",
+  applyAsDefault = "Apply as default",
   handlingApplyType = "How would you like this handling to be applied?",
 
   -- Long Messages
