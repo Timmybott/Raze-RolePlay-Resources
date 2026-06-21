@@ -159,7 +159,11 @@ RegisterNetEvent('raze_jobscreator:takeVehicle', function(jobName, locType, locL
 
     local netId = NetworkGetNetworkIdFromEntity(veh)
     jobVehicles[netId] = { deposit = deposit, owner = xPlayer.identifier, plate = plate }
-    TriggerClientEvent('raze_jobscreator:enterVehicle', src, netId, deposit)
+    -- Kennzeichen mitschicken: der Client erzwingt es lokal nochmal, weil das
+    -- serverseitige SetVehicleNumberPlateText bei CreateVehicleServerSetter nicht
+    -- zuverlässig zum Client synct (sonst kann raze_carstatus das Fahrzeug nicht
+    -- als "eigenes" erkennen und es lässt sich nicht abschließen).
+    TriggerClientEvent('raze_jobscreator:enterVehicle', src, netId, deposit, plate)
 end)
 
 -- Einparken: getracktes Job-Fahrzeug löschen und Pfand erstatten

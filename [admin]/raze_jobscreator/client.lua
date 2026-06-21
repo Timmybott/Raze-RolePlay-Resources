@@ -207,7 +207,7 @@ end)
 
 -- Job-Fahrzeug (serverseitig gespawnt) betreten – Auto gehört dem Spieler NICHT,
 -- es ist nur temporär (Pfand wurde hinterlegt).
-RegisterNetEvent('raze_jobscreator:enterVehicle', function(netId, deposit)
+RegisterNetEvent('raze_jobscreator:enterVehicle', function(netId, deposit, plate)
     local veh = NetworkGetEntityFromNetworkId(netId)
     local tries = 0
     while (not veh or veh == 0 or not DoesEntityExist(veh)) and tries < 100 do
@@ -216,8 +216,20 @@ RegisterNetEvent('raze_jobscreator:enterVehicle', function(netId, deposit)
         tries = tries + 1
     end
     if veh and veh ~= 0 and DoesEntityExist(veh) then
-        -- Kennzeichen wird serverseitig gesetzt (für raze_carstatus); hier nur einsteigen
         SetPedIntoVehicle(PlayerPedId(), veh, -1)
+        -- Kennzeichen lokal erzwingen: das serverseitig gesetzte JOB#####-Kennzeichen
+        -- synct bei CreateVehicleServerSetter nicht zuverlässig zum Client. Als
+        -- Insasse hat dieser Client jetzt Kontrolle über das Fahrzeug; wir setzen den
+        -- bekannten Wert lokal, damit raze_carstatus (G-Schließen) ihn auch ausliest.
+        if plate and plate ~= '' then
+            local t = 0
+            while not NetworkHasControlOfEntity(veh) and t < 20 do
+                NetworkRequestControlOfEntity(veh)
+                Wait(10)
+                t = t + 1
+            end
+            SetVehicleNumberPlateText(veh, plate)
+        end
         local msg = (deposit and deposit > 0) and ('Fahrzeug ausgegeben (Pfand ' .. deposit .. '$ hinterlegt).') or 'Fahrzeug ausgegeben.'
         notify(msg, 'success')
     end
