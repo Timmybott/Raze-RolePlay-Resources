@@ -35,4 +35,6 @@ Config.DistanceTargets = {
 }
 
 -- Misc
-Config.AutoRunSQL = true -- File-based storage initialization (no longer uses SQL)
+-- Tables are created automatically by server/sv-storage.lua (oxmysql) on start.
+-- This flag only controls the legacy initSQL helper and can be left as-is.
+Config.AutoRunSQL = true
