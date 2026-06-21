@@ -1,73 +1,191 @@
-#name: Deploy Resources & Restart Server
-#
-#on:
-#  push:
-#    branches:
-#      - main
-#
-#jobs:
-#  deploy-and-restart:
-#    runs-on: ubuntu-latest
-#    steps:
-#      - name: Checkout Repository
-#        uses: actions/checkout@v4
-#        with:
-#          fetch-depth: 2
-#
-#      - name: Get changed files
-#        id: changed
-#        run: |
-#          # Absichern falls kein vorheriger Commit existiert (z.B. erster Push)
-#          if git rev-parse HEAD~1 > /dev/null 2>&1; then
-#            BASE="HEAD~1"
-#          else
-#            BASE=$(git hash-object -t tree /dev/null)  # leerer Tree
-#          fi
-#
-#          # Hinzugefügte & geänderte Dateien
-#          git diff --name-only --diff-filter=AM "$BASE" HEAD > changed_files.txt
-#
-#          # Gelöschte Dateien
-#          git diff --name-only --diff-filter=D "$BASE" HEAD > deleted_files.txt
-#
-#          # Renames: alten Namen löschen, neuen Namen hochladen
-#          git diff --name-only --diff-filter=R "$BASE" HEAD > renamed_new.txt
-#          git diff --diff-filter=R --name-status "$BASE" HEAD | awk '{print $2}' > renamed_old.txt
-#
-#          echo "=== Neu/Geändert ===" && cat changed_files.txt
-#          echo "=== Gelöscht ===" && cat deleted_files.txt
-#          echo "=== Umbenannt (neu) ===" && cat renamed_new.txt
-#          echo "=== Umbenannt (alt, wird gelöscht) ===" && cat renamed_old.txt
-#
-#      - name: Upload changed files & delete removed files via SFTP
-#        run: |
-#          sudo apt-get install -y lftp
-#
-#          lftp -u "${{ secrets.SFTP_USER }}","${{ secrets.SFTP_PASSWORD }}" \
-#            -p ${{ secrets.SFTP_PORT }} \
-#            sftp://${{ secrets.SFTP_HOST }} <<EOF
-#          set sftp:auto-confirm yes
-#          set net:timeout 30
-#
-#          $(while IFS= read -r file; do
-#            [ -z "$file" ] && continue
-#            dir=$(dirname "$file")
-#            echo "mkdir -p /txData/ESXLegacy_7CCB6A.base/resources/$dir"
-#            echo "put $file -o /txData/ESXLegacy_7CCB6A.base/resources/$file"
-#          done < <(cat changed_files.txt renamed_new.txt))
-#
-#          $(while IFS= read -r file; do
-#            [ -z "$file" ] && continue
-#            echo "rm /txData/ESXLegacy_7CCB6A.base/resources/$file"
-#          done < <(cat deleted_files.txt renamed_old.txt))
-#
-#          bye
-#          EOF
-#
-#      - name: Restart Pterodactyl Server
-#        run: |
-#          curl -X POST "https://panel.spaceify.eu/api/client/servers/7ed1d988/power" \
-#            -H "Authorization: Bearer ${{ secrets.PTERO_API_KEY }}" \
-#            -H "Content-Type: application/json" \
-#            -H "Accept: application/json" \
-#            -d '{"signal": "restart"}'
+name: Deploy geänderte Resources via SFTP
+
+# Dieses Repository = der komplette Inhalt des `resources/`-Ordners auf dem
+# Gameserver. Repo-Root == .../resources auf dem SFTP-Server.
+# Bei jedem Push wird der Diff des Pushes ermittelt und NUR das, was sich
+# geändert hat, übertragen / gelöscht / umbenannt – nichts außerhalb von
+# `resources/` wird angefasst.
+
+on:
+  push:
+    branches:
+      - main
+
+# Mehrere schnell aufeinanderfolgende Pushes nicht parallel deployen,
+# sonst überholen sich Uploads/Löschungen.
+concurrency:
+  group: sftp-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+        with:
+          # Volle History, damit der Vorgänger-Commit (github.event.before)
+          # für den Diff lokal verfügbar ist.
+          fetch-depth: 0
+
+      - name: Änderungen ermitteln und SFTP-Batch bauen
+        id: plan
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+          # Zielordner auf dem SFTP-Server (entspricht dem Repo-Root).
+          REMOTE_BASE: /txData/ESXLegacy_7CCB6A.base/resources
+        run: |
+          # Kein 'set -u': leere (assoziative) Arrays würden sonst je nach
+          # bash-Version einen "unbound variable"-Fehler werfen.
+          set -o pipefail
+
+          empty_tree=$(git hash-object -t tree /dev/null)
+          BEFORE="$BEFORE_SHA"
+          HEAD="$AFTER_SHA"
+
+          # Vorgänger-Commit absichern: bei erstem Push / Force-Push / fehlendem
+          # before-Commit auf HEAD~1 bzw. den leeren Tree zurückfallen.
+          if [ -z "$BEFORE" ] \
+             || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+             || ! git rev-parse -q --verify "${BEFORE}^{commit}" >/dev/null 2>&1; then
+            if git rev-parse -q --verify "${HEAD}~1^{commit}" >/dev/null 2>&1; then
+              BEFORE=$(git rev-parse "${HEAD}~1")
+            else
+              BEFORE="$empty_tree"
+            fi
+          fi
+
+          echo "Diff: $BEFORE -> $HEAD"
+          echo "Zielbasis: $REMOTE_BASE"
+
+          : > batch.sftp
+          declare -A made_dir       # schon angelegte Remote-Verzeichnisse (dedupe)
+          declare -A deleted_dir    # Verzeichnisse, in denen gelöscht wurde
+
+          uploads=()
+          deletes=()
+
+          # CI-Dateien (.github/...) sind keine Game-Resources -> nicht deployen.
+          skip() { case "$1" in .github/*) return 0;; *) return 1;; esac; }
+
+          # Diff NUL-getrennt lesen -> robust gegen Leerzeichen/Sonderzeichen.
+          # Rename (R) / Copy (C) liefern je zwei Pfade (alt + neu).
+          while IFS= read -r -d '' status; do
+            case "$status" in
+              R*)
+                IFS= read -r -d '' old
+                IFS= read -r -d '' new
+                skip "$old" || deletes+=("$old")
+                skip "$new" || uploads+=("$new")
+                ;;
+              C*)
+                IFS= read -r -d '' old
+                IFS= read -r -d '' new
+                skip "$new" || uploads+=("$new")
+                ;;
+              D)
+                IFS= read -r -d '' path
+                skip "$path" || deletes+=("$path")
+                ;;
+              *)
+                # A (added), M (modified), T (type changed) -> hochladen
+                IFS= read -r -d '' path
+                skip "$path" || uploads+=("$path")
+                ;;
+            esac
+          done < <(git diff -M -C -z --name-status "$BEFORE" "$HEAD")
+
+          # Remote-Elternverzeichnisse für eine Datei anlegen (kürzestes zuerst).
+          # '-mkdir' -> Fehler (Verzeichnis existiert schon) wird ignoriert.
+          emit_dirs() {
+            local dir; dir=$(dirname "$1")
+            [ "$dir" = "." ] && return 0
+            local acc="" seg
+            local IFS='/'
+            for seg in $dir; do
+              [ -z "$seg" ] && continue
+              if [ -z "$acc" ]; then acc="$seg"; else acc="$acc/$seg"; fi
+              if [ -z "${made_dir[$acc]:-}" ]; then
+                made_dir[$acc]=1
+                printf -- '-mkdir "%s/%s"\n' "$REMOTE_BASE" "$acc" >> batch.sftp
+              fi
+            done
+          }
+
+          record_deleted_dir() {
+            local dir; dir=$(dirname "$1")
+            [ "$dir" = "." ] && return 0
+            local acc="" seg
+            local IFS='/'
+            for seg in $dir; do
+              [ -z "$seg" ] && continue
+              if [ -z "$acc" ]; then acc="$seg"; else acc="$acc/$seg"; fi
+              deleted_dir[$acc]=1
+            done
+          }
+
+          # Uploads: Verzeichnisse sicherstellen + Datei übertragen.
+          # Pfade in "..." -> sftp macht KEIN Globbing (wichtig für [klammer]-Ordner).
+          if [ "${#uploads[@]}" -gt 0 ]; then
+            for f in "${uploads[@]}"; do
+              emit_dirs "$f"
+              printf 'put "%s" "%s/%s"\n' "$f" "$REMOTE_BASE" "$f" >> batch.sftp
+            done
+          fi
+
+          # Löschungen (auch der "alte" Name bei Umbenennungen).
+          # '-rm' -> Fehler (Datei schon weg) wird ignoriert.
+          if [ "${#deletes[@]}" -gt 0 ]; then
+            for f in "${deletes[@]}"; do
+              printf -- '-rm "%s/%s"\n' "$REMOTE_BASE" "$f" >> batch.sftp
+              record_deleted_dir "$f"
+            done
+          fi
+
+          # Leer gewordene Verzeichnisse aufräumen (tiefste zuerst).
+          # '-rmdir' entfernt nur LEERE Verzeichnisse; bei nicht-leeren schlägt es
+          # fehl und wird ignoriert -> nichts mit Inhalt geht verloren.
+          if [ "${#deleted_dir[@]}" -gt 0 ]; then
+            for d in "${!deleted_dir[@]}"; do
+              printf '%s\t%s\n' "$(awk -F/ '{print NF}' <<< "$d")" "$d"
+            done | sort -rn | cut -f2- | while IFS= read -r d; do
+              printf -- '-rmdir "%s/%s"\n' "$REMOTE_BASE" "$d"
+            done >> batch.sftp
+          fi
+
+          echo "=== Geplante SFTP-Befehle ==="
+          if [ -s batch.sftp ]; then
+            cat batch.sftp
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "(keine zu deployenden Änderungen)"
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Per SFTP übertragen
+        if: steps.plan.outputs.has_changes == 'true'
+        env:
+          SFTP_HOST: ${{ secrets.SFTP_HOST }}
+          SFTP_PORT: ${{ secrets.SFTP_PORT }}
+          SFTP_USER: ${{ secrets.SFTP_USER }}
+          SFTP_PASSWORD: ${{ secrets.SFTP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq sshpass
+
+          # -oBatchMode=no  : erlaubt Passwort-Auth (von sshpass gefüttert) im -b Modus
+          # StrictHostKeyChecking=no + /dev/null : kein interaktiver Host-Key-Prompt
+          # Schlägt ein nicht mit '-' versehener Befehl (z.B. put) fehl, bricht sftp
+          # mit Fehlercode ab -> der Job schlägt sichtbar fehl.
+          sshpass -p "$SFTP_PASSWORD" \
+            sftp -oBatchMode=no \
+                 -oStrictHostKeyChecking=no \
+                 -oUserKnownHostsFile=/dev/null \
+                 -oConnectTimeout=30 \
+                 -P "${SFTP_PORT:-22}" \
+                 -b batch.sftp \
+                 "$SFTP_USER@$SFTP_HOST"
+
+          echo "Deploy abgeschlossen."
