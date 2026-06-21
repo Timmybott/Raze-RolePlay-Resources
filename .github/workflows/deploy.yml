@@ -1,29 +1,32 @@
-name: Resources via SFTP spiegeln (Full-Mirror)
+name: Deploy Resources via SFTP
 
 # Dieses Repository = der komplette Inhalt des `resources/`-Ordners auf dem
 # Gameserver. Repo-Root == .../resources auf dem SFTP-Server.
 #
-# Bei jedem Push wird NICHT mehr nur der Commit-Diff übertragen, sondern der
-# GESAMTE Repo-Inhalt mit dem Zielordner gespiegelt (lftp mirror):
-#   * neue / geänderte Dateien werden hochgeladen,
-#   * Dateien/Ordner, die im Repo NICHT (mehr) existieren, werden auf dem
-#     Server GELÖSCHT.
-# Ergebnis: Der Zielordner entspricht danach EXAKT dem Repository-Stand.
-# Nur git-interne Dinge (.git, .github, .gitignore, .gitattributes) werden
-# ausgenommen.
+# Es gibt ZWEI Betriebsarten:
 #
-# ACHTUNG: Durch `--delete` wird ALLES im Zielordner entfernt, was nicht im
-# Repository liegt. Liegen dort manuell gepflegte Resources, die nicht im Repo
-# sind, gingen sie verloren -> dann vorher ins Repo aufnehmen.
+# 1) Bei jedem Push (schnell, Standard):
+#    Es wird NUR der Diff des Pushes übertragen – geänderte/neue Dateien hoch,
+#    gelöschte/umbenannte runter. Kein Voll-Scan des Servers -> Sekunden statt
+#    Minuten. Solange ausschließlich dieser Workflow den Ordner verändert,
+#    bleibt der Server dadurch exakt gleich zum Repository.
+#
+# 2) Manuell ("Run workflow" -> workflow_dispatch): VOLL-MIRROR.
+#    Spiegelt den kompletten Repo-Stand und LÖSCHT auf dem Server alles, was
+#    nicht im Repo liegt. Gedacht als Erst-Synchronisation bzw. "Reparatur-
+#    Knopf", falls der Server doch einmal vom Repo abgewichen sein sollte
+#    (z.B. nach einem abgebrochenen Deploy).
+#
+# Nur git-interne Dinge (.git, .github, .gitignore, .gitattributes) werden in
+# beiden Fällen ausgenommen.
 
 on:
   push:
     branches:
       - main
-  # Erlaubt eine manuelle, vollständige Re-Synchronisation per Knopfdruck.
   workflow_dispatch: {}
 
-# Mehrere schnell aufeinanderfolgende Pushes nicht parallel spiegeln,
+# Mehrere schnell aufeinanderfolgende Läufe nicht parallel deployen,
 # sonst überholen sich Uploads/Löschungen.
 concurrency:
   group: sftp-deploy
@@ -36,66 +39,204 @@ jobs:
       - name: Repository auschecken
         uses: actions/checkout@v4
         with:
-          # Volle History -> git-restore-mtime kann je Datei die Commit-Zeit
-          # ermitteln (siehe nächster Schritt).
+          # Volle History, damit der Vorgänger-Commit (github.event.before)
+          # für den Diff lokal verfügbar ist.
           fetch-depth: 0
 
-      - name: lftp installieren & Datei-Zeitstempel wiederherstellen
+      # ----------------------------------------------------------------------
+      # SCHNELLER PFAD: nur den Commit-Diff übertragen (bei push)
+      # ----------------------------------------------------------------------
+      - name: Änderungen ermitteln und SFTP-Batch bauen
+        id: plan
+        if: github.event_name == 'push'
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+          # Zielordner auf dem SFTP-Server (entspricht dem Repo-Root).
+          REMOTE_BASE: /txData/ESXLegacy_7CCB6A.base/resources
         run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq lftp
+          # Kein 'set -u': leere (assoziative) Arrays würden sonst je nach
+          # bash-Version einen "unbound variable"-Fehler werfen.
+          set -o pipefail
 
-          # Ein frischer Checkout setzt bei ALLEN Dateien die mtime auf "jetzt".
-          # Ohne Korrektur würde der Mirror deshalb bei jedem Lauf den kompletten
-          # Ordner neu hochladen. git-restore-mtime setzt die mtime jeder Datei
-          # auf die Zeit ihres letzten Commits -> der Mirror überträgt dann nur
-          # tatsächlich geänderte Dateien. Schlägt das fehl, wird im Zweifel
-          # einfach mehr übertragen -> nicht fatal, die Spiegelung bleibt korrekt.
-          export PATH="$HOME/.local/bin:$PATH"
-          python3 -m pip install --quiet --break-system-packages git-restore-mtime \
-            || python3 -m pip install --quiet --user git-restore-mtime \
-            || true
-          git restore-mtime \
-            || echo "Hinweis: git-restore-mtime nicht verfügbar – ggf. werden alle Dateien übertragen."
+          empty_tree=$(git hash-object -t tree /dev/null)
+          BEFORE="$BEFORE_SHA"
+          HEAD="$AFTER_SHA"
 
-      - name: Per SFTP spiegeln (mirror)
+          # Vorgänger-Commit absichern: bei erstem Push / Force-Push / fehlendem
+          # before-Commit auf HEAD~1 bzw. den leeren Tree zurückfallen.
+          if [ -z "$BEFORE" ] \
+             || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+             || ! git rev-parse -q --verify "${BEFORE}^{commit}" >/dev/null 2>&1; then
+            if git rev-parse -q --verify "${HEAD}~1^{commit}" >/dev/null 2>&1; then
+              BEFORE=$(git rev-parse "${HEAD}~1")
+            else
+              BEFORE="$empty_tree"
+            fi
+          fi
+
+          echo "Diff: $BEFORE -> $HEAD"
+          echo "Zielbasis: $REMOTE_BASE"
+
+          : > batch.sftp
+          declare -A made_dir       # schon angelegte Remote-Verzeichnisse (dedupe)
+          declare -A deleted_dir    # Verzeichnisse, in denen gelöscht wurde
+
+          uploads=()
+          deletes=()
+
+          # CI-Dateien (.github/...) und git-Metadaten sind keine Game-Resources.
+          skip() { case "$1" in .github/*|.git/*|.gitignore|.gitattributes) return 0;; *) return 1;; esac; }
+
+          # Diff NUL-getrennt lesen -> robust gegen Leerzeichen/Sonderzeichen.
+          # Rename (R) / Copy (C) liefern je zwei Pfade (alt + neu).
+          while IFS= read -r -d '' status; do
+            case "$status" in
+              R*)
+                IFS= read -r -d '' old
+                IFS= read -r -d '' new
+                skip "$old" || deletes+=("$old")
+                skip "$new" || uploads+=("$new")
+                ;;
+              C*)
+                IFS= read -r -d '' old
+                IFS= read -r -d '' new
+                skip "$new" || uploads+=("$new")
+                ;;
+              D)
+                IFS= read -r -d '' path
+                skip "$path" || deletes+=("$path")
+                ;;
+              *)
+                # A (added), M (modified), T (type changed) -> hochladen
+                IFS= read -r -d '' path
+                skip "$path" || uploads+=("$path")
+                ;;
+            esac
+          done < <(git diff -M -C -z --name-status "$BEFORE" "$HEAD")
+
+          # Remote-Elternverzeichnisse für eine Datei anlegen (kürzestes zuerst).
+          # '-mkdir' -> Fehler (Verzeichnis existiert schon) wird ignoriert.
+          emit_dirs() {
+            local dir; dir=$(dirname "$1")
+            [ "$dir" = "." ] && return 0
+            local acc="" seg
+            local IFS='/'
+            for seg in $dir; do
+              [ -z "$seg" ] && continue
+              if [ -z "$acc" ]; then acc="$seg"; else acc="$acc/$seg"; fi
+              if [ -z "${made_dir[$acc]:-}" ]; then
+                made_dir[$acc]=1
+                printf -- '-mkdir "%s/%s"\n' "$REMOTE_BASE" "$acc" >> batch.sftp
+              fi
+            done
+          }
+
+          record_deleted_dir() {
+            local dir; dir=$(dirname "$1")
+            [ "$dir" = "." ] && return 0
+            local acc="" seg
+            local IFS='/'
+            for seg in $dir; do
+              [ -z "$seg" ] && continue
+              if [ -z "$acc" ]; then acc="$seg"; else acc="$acc/$seg"; fi
+              deleted_dir[$acc]=1
+            done
+          }
+
+          # Uploads: Verzeichnisse sicherstellen + Datei übertragen.
+          # Pfade in "..." -> sftp macht KEIN Globbing (wichtig für [klammer]-Ordner).
+          if [ "${#uploads[@]}" -gt 0 ]; then
+            for f in "${uploads[@]}"; do
+              emit_dirs "$f"
+              printf 'put "%s" "%s/%s"\n' "$f" "$REMOTE_BASE" "$f" >> batch.sftp
+            done
+          fi
+
+          # Löschungen (auch der "alte" Name bei Umbenennungen).
+          # '-rm' -> Fehler (Datei schon weg) wird ignoriert.
+          if [ "${#deletes[@]}" -gt 0 ]; then
+            for f in "${deletes[@]}"; do
+              printf -- '-rm "%s/%s"\n' "$REMOTE_BASE" "$f" >> batch.sftp
+              record_deleted_dir "$f"
+            done
+          fi
+
+          # Leer gewordene Verzeichnisse aufräumen (tiefste zuerst).
+          # '-rmdir' entfernt nur LEERE Verzeichnisse; bei nicht-leeren schlägt es
+          # fehl und wird ignoriert -> nichts mit Inhalt geht verloren.
+          if [ "${#deleted_dir[@]}" -gt 0 ]; then
+            for d in "${!deleted_dir[@]}"; do
+              printf '%s\t%s\n' "$(awk -F/ '{print NF}' <<< "$d")" "$d"
+            done | sort -rn | cut -f2- | while IFS= read -r d; do
+              printf -- '-rmdir "%s/%s"\n' "$REMOTE_BASE" "$d"
+            done >> batch.sftp
+          fi
+
+          echo "=== Geplante SFTP-Befehle ==="
+          if [ -s batch.sftp ]; then
+            cat batch.sftp
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "(keine zu deployenden Änderungen)"
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Diff per SFTP übertragen
+        if: github.event_name == 'push' && steps.plan.outputs.has_changes == 'true'
         env:
           SFTP_HOST: ${{ secrets.SFTP_HOST }}
           SFTP_PORT: ${{ secrets.SFTP_PORT }}
           SFTP_USER: ${{ secrets.SFTP_USER }}
           SFTP_PASSWORD: ${{ secrets.SFTP_PASSWORD }}
-          # Zielordner auf dem SFTP-Server (entspricht dem Repo-Root).
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq sshpass
+
+          # -oBatchMode=no  : erlaubt Passwort-Auth (von sshpass gefüttert) im -b Modus
+          # StrictHostKeyChecking=no + /dev/null : kein interaktiver Host-Key-Prompt
+          # Schlägt ein nicht mit '-' versehener Befehl (z.B. put) fehl, bricht sftp
+          # mit Fehlercode ab -> der Job schlägt sichtbar fehl.
+          sshpass -p "$SFTP_PASSWORD" \
+            sftp -oBatchMode=no \
+                 -oStrictHostKeyChecking=no \
+                 -oUserKnownHostsFile=/dev/null \
+                 -oConnectTimeout=30 \
+                 -P "${SFTP_PORT:-22}" \
+                 -b batch.sftp \
+                 "$SFTP_USER@$SFTP_HOST"
+
+          echo "Inkrementeller Deploy abgeschlossen."
+
+      # ----------------------------------------------------------------------
+      # REPARATUR-PFAD: kompletter Voll-Mirror (nur bei manuellem Auslösen)
+      # ----------------------------------------------------------------------
+      - name: Voll-Mirror (manuell, gleicht Server exakt an Repo an)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SFTP_HOST: ${{ secrets.SFTP_HOST }}
+          SFTP_PORT: ${{ secrets.SFTP_PORT }}
+          SFTP_USER: ${{ secrets.SFTP_USER }}
+          SFTP_PASSWORD: ${{ secrets.SFTP_PASSWORD }}
           REMOTE_BASE: /txData/ESXLegacy_7CCB6A.base/resources
         run: |
           set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lftp
 
-          # Secrets / Ziel absichern (verhindert u.a. ein versehentliches
-          # --delete gegen einen leeren/falschen Zielpfad).
           : "${SFTP_HOST:?SFTP_HOST Secret fehlt}"
           : "${SFTP_USER:?SFTP_USER Secret fehlt}"
           : "${SFTP_PASSWORD:?SFTP_PASSWORD Secret fehlt}"
           : "${REMOTE_BASE:?REMOTE_BASE darf nicht leer sein}"
           PORT="${SFTP_PORT:-22}"
 
-          echo "Spiegel-Ziel: $SFTP_HOST:$PORT  ->  $REMOTE_BASE"
+          echo "VOLL-MIRROR -> $SFTP_HOST:$PORT : $REMOTE_BASE"
+          echo "ACHTUNG: löscht auf dem Server alles, was nicht im Repo liegt."
 
-          # Hinweise zum lftp-Skript:
-          #   open -u user,pass         : Passwort kommt per stdin (heredoc), nicht
-          #                               über die Prozess-Argumente (kein 'ps'-Leak).
-          #   sftp:auto-confirm yes     : unbekannten Host-Key automatisch akzeptieren.
-          #   sftp:connect-program ...  : ssh ohne Host-Key-Prompt (wie StrictHostKeyChecking=no).
-          #   mkdir -p                  : Zielordner anlegen, falls noch nicht vorhanden
-          #                               (läuft VOR fail-exit -> "existiert schon" ist egal).
-          #   cmd:fail-exit yes         : ab hier bricht lftp bei Fehlern ab -> Job
-          #                               schlägt sichtbar fehl.
-          #   mirror -R                 : reverse = lokal -> remote.
-          #     --delete                : entfernt remote alles, was lokal fehlt.
-          #     --no-perms              : keine chmod-Versuche (FiveM braucht keine Rechte).
-          #     --verbose               : jede Übertragung/Löschung erscheint im Log.
-          #     --exclude '^\.git'      : schließt .git, .github, .gitignore,
-          #                               .gitattributes aus (alles, was mit ".git" beginnt).
-          #   "./" -> "$REMOTE_BASE"    : ganzer Repo-Inhalt in den Resources-Ordner.
+          # mirror -R (reverse: lokal -> remote), --delete entfernt remote alles,
+          # was lokal fehlt; --exclude '^\.git' nimmt .git/.github/.gitignore/
+          # .gitattributes aus. cmd:fail-exit -> Job schlägt bei Fehlern fehl.
           lftp <<LFTP_SCRIPT
           set sftp:auto-confirm yes
           set net:timeout 30
@@ -109,4 +250,4 @@ jobs:
           bye
           LFTP_SCRIPT
 
-          echo "Mirror abgeschlossen – Server entspricht jetzt dem Repository-Stand."
+          echo "Voll-Mirror abgeschlossen – Server entspricht jetzt dem Repository-Stand."
