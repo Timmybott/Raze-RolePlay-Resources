@@ -1,103 +1,52 @@
--- jg-handling - Server storage (oxmysql / database backed)
---
--- Replaces the previous file-based "carpack" storage. Handling data now lives
--- in the FiveM database (oxmysql):
---   * tables are created automatically on resource start,
---   * any existing carpack data (carpack/defaults.json) is migrated ONCE,
---   * all future changes are written straight to the database.
---
--- Design note: an in-memory cache mirrors the database so that lookups stay
--- SYNCHRONOUS - the lib.callback handlers in sv-vehicle.lua / sv-profiles.lua
--- return the value directly and cannot wait for an async query. Writes update
--- the cache immediately and persist to the database in the background.
-
+-- Simple memory-only storage to replace oxmysql
+-- "Apply as default" additionally writes a real handling.meta carpack to the
+-- resource folder (carpack/handling.meta) and persists the defaults to disk so
+-- they survive restarts.
 local Storage = {}
 
--- In-memory mirror of the database (synchronous read source).
+-- Initialize empty data structures
 Storage.profilesData = {}
 Storage.vehicleData = {}
 
 local RESOURCE = GetCurrentResourceName()
+local CARPACK_DIR = "carpack"
+local META_FILE = CARPACK_DIR .. "/handling.meta"
+local DATA_FILE = CARPACK_DIR .. "/defaults.json"
 
-local PROFILES_TABLE = "handling_profiles"
-local VEHICLE_TABLE  = "handling_vehicle_data"
-
-local CREATE_PROFILES_SQL = [[
-CREATE TABLE IF NOT EXISTS handling_profiles (
-  id VARCHAR(64) NOT NULL PRIMARY KEY,
-  name VARCHAR(255) NOT NULL,
-  vehicle VARCHAR(100) NOT NULL,
-  edited_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  edited_by VARCHAR(255),
-  handling_data LONGTEXT NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
-]]
-
-local CREATE_VEHICLE_SQL = [[
-CREATE TABLE IF NOT EXISTS handling_vehicle_data (
-  plate VARCHAR(100) NOT NULL,
-  vehicle_hash VARCHAR(100) NOT NULL,
-  base_handling_data LONGTEXT NOT NULL,
-  handling_data LONGTEXT NOT NULL,
-  PRIMARY KEY (plate, vehicle_hash)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
-]]
-
--- ---------------------------------------------------------------------------
--- Helpers
--- ---------------------------------------------------------------------------
+-- Generate unique ID for profiles
 local function generateId()
     return tostring(os.time()) .. "_" .. tostring(math.random(1000, 9999))
 end
 
--- Handling blobs are stored as JSON strings (cl-vehicle.lua json.decode's them).
+-- Make sure handling blobs are stored as JSON strings (the client lookup in
+-- cl-vehicle.lua expects strings and json.decode's them).
 local function asJsonString(v)
     if type(v) == "table" then return json.encode(v) end
     return v
 end
 
--- Canonical string form for a vehicle model hash so values coming from the
--- client (number), the database (string) and the JSON migration all compare
--- equal, regardless of int/float representation.
-local function hashKey(v)
-    if type(v) == "number" then return string.format("%.0f", v) end
-    return tostring(v)
-end
-
-local function dbReady()
-    return GetResourceState('oxmysql') == 'started'
-end
-
--- Fire-and-forget DB write. The cache is the synchronous source of truth, so a
--- write that lands a few ms later is fine; oxmysql logs query errors itself.
-local function dbExec(query, params)
-    if not dbReady() then
-        print("^1[JG Handling] oxmysql not started - DB write skipped^0")
-        return
+local function asTable(v)
+    if type(v) == "string" then
+        local ok, decoded = pcall(json.decode, v)
+        if ok and type(decoded) == "table" then return decoded end
+        return {}
     end
-    exports.oxmysql:query(query, params or {}, function(_) end)
+    return v or {}
 end
 
--- ===========================================================================
--- PROFILES
--- ===========================================================================
+-- PROFILES OPERATIONS
 function Storage.createProfile(name, vehicle, editedBy, handlingData)
-    local profile = {
+    local newProfile = {
         id = generateId(),
         name = name,
         vehicle = vehicle,
         edited_at = os.date("%Y-%m-%d %H:%M:%S"),
         edited_by = editedBy or "Admin",
-        handling_data = asJsonString(handlingData),
+        handling_data = handlingData
     }
 
-    table.insert(Storage.profilesData, profile)
-
-    dbExec(
-        ("INSERT INTO %s (id, name, vehicle, edited_at, edited_by, handling_data) VALUES (?, ?, ?, ?, ?, ?)"):format(PROFILES_TABLE),
-        { profile.id, profile.name, profile.vehicle, profile.edited_at, profile.edited_by, profile.handling_data }
-    )
-    return profile.id
+    table.insert(Storage.profilesData, newProfile)
+    return newProfile.id
 end
 
 function Storage.deleteProfile(id)
@@ -107,8 +56,6 @@ function Storage.deleteProfile(id)
             break
         end
     end
-
-    dbExec(("DELETE FROM %s WHERE id = ?"):format(PROFILES_TABLE), { id })
     return true
 end
 
@@ -147,22 +94,174 @@ function Storage.getProfiles(searchTerm, limit, offset)
     return result, totalCount
 end
 
--- ===========================================================================
--- VEHICLE HANDLING
--- ===========================================================================
-function Storage.lookupVehicleHandling(plate, vehicleHash)
-    local hk = hashKey(vehicleHash)
+-- ============================================================================
+-- CARPACK / handling.meta GENERATION
+-- ============================================================================
 
-    -- Exact plate match first
+local STR_FLAG_FIELDS = {
+    strModelFlags = true,
+    strHandlingFlags = true,
+    strDamageFlags = true,
+    strAdvancedFlags = true,
+}
+
+local TEXT_FIELDS = {
+    handlingName = true,
+    AIHandling = true,
+    handlingType = true,
+}
+
+local SKIP_FIELDS = {
+    audioNameHash = true,
+}
+
+-- A nice, stable order for the sub-handling items.
+local SUBCLASS_ORDER = {
+    "CCarHandlingData",
+    "CBikeHandlingData",
+    "CFlyingHandlingData",
+    "CBoatHandlingData",
+}
+
+local function fmtFloat(v)
+    return string.format("%.6f", (tonumber(v) or 0) + 0.0)
+end
+
+local function fmtInt(v)
+    return string.format("%d", math.floor(tonumber(v) or 0))
+end
+
+local function fmtHex(v)
+    local n = tonumber(v) or 0
+    return string.format("%X", math.floor(n))
+end
+
+-- Build the XML for a single handling field. Returns a string or nil (skip).
+local function fieldToXml(indent, key, value)
+    if SKIP_FIELDS[key] then return nil end
+    if value == nil then return nil end
+
+    if key:sub(1, 3) == "vec" then
+        local x, y, z = 0, 0, 0
+        if type(value) == "table" then
+            x = value.x or value[1] or 0
+            y = value.y or value[2] or 0
+            z = value.z or value[3] or 0
+        end
+        return string.format('%s<%s x="%s" y="%s" z="%s" />', indent, key, fmtFloat(x), fmtFloat(y), fmtFloat(z))
+    elseif STR_FLAG_FIELDS[key] then
+        return string.format('%s<%s>%s</%s>', indent, key, fmtHex(value), key)
+    elseif TEXT_FIELDS[key] then
+        return string.format('%s<%s>%s</%s>', indent, key, tostring(value), key)
+    elseif key:sub(1, 1) == "f" then
+        return string.format('%s<%s value="%s" />', indent, key, fmtFloat(value))
+    else
+        -- nInitialDriveGears, nMonetaryValue, ... and any other numeric field
+        return string.format('%s<%s value="%s" />', indent, key, fmtInt(value))
+    end
+end
+
+-- Build one <Item type="CHandlingData"> ... </Item> from a decoded handling table.
+local function handlingItemXml(handling)
+    if type(handling) ~= "table" then return nil end
+    local classMap = HANDLING_KEY_CLASS_MAP or {}
+
+    local handlingName = handling.handlingName
+    if not handlingName or handlingName == "" then
+        return nil
+    end
+
+    local lines = {}
+    table.insert(lines, '    <Item type="CHandlingData">')
+    table.insert(lines, string.format('      <handlingName>%s</handlingName>', tostring(handlingName)))
+
+    -- Root (CHandlingData) fields
+    for key, value in pairs(handling) do
+        if key ~= "handlingName" and (classMap[key] == "CHandlingData") then
+            local xml = fieldToXml("      ", key, value)
+            if xml then table.insert(lines, xml) end
+        end
+    end
+
+    -- Sub-handling fields, grouped by class
+    local subLines = {}
+    for _, subClass in ipairs(SUBCLASS_ORDER) do
+        local itemLines = {}
+        for key, value in pairs(handling) do
+            if classMap[key] == subClass then
+                local xml = fieldToXml("          ", key, value)
+                if xml then table.insert(itemLines, xml) end
+            end
+        end
+        if #itemLines > 0 then
+            table.insert(subLines, string.format('        <Item type="%s">', subClass))
+            for _, l in ipairs(itemLines) do table.insert(subLines, l) end
+            table.insert(subLines, '        </Item>')
+        end
+    end
+
+    if #subLines > 0 then
+        table.insert(lines, '      <SubHandlingData>')
+        for _, l in ipairs(subLines) do table.insert(lines, l) end
+        table.insert(lines, '      </SubHandlingData>')
+    end
+
+    table.insert(lines, '    </Item>')
+    return table.concat(lines, "\n")
+end
+
+-- Regenerate carpack/handling.meta from every "default" (plate == "*") entry.
+function Storage.writeCarpackMeta()
+    local items = {}
     for _, data in ipairs(Storage.vehicleData) do
-        if data.plate == plate and data.vehicle_hash == hk then
+        if data.plate == "*" then
+            local item = handlingItemXml(asTable(data.handling_data))
+            if item then table.insert(items, item) end
+        end
+    end
+
+    local xml = {
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '',
+        '<CHandlingDataMgr>',
+        '  <HandlingData>',
+    }
+    for _, item in ipairs(items) do
+        table.insert(xml, item)
+    end
+    table.insert(xml, '  </HandlingData>')
+    table.insert(xml, '</CHandlingDataMgr>')
+
+    SaveResourceFile(RESOURCE, META_FILE, table.concat(xml, "\n"), -1)
+end
+
+-- Persist the runtime store so defaults survive a resource/server restart.
+function Storage.persist()
+    SaveResourceFile(RESOURCE, DATA_FILE, json.encode(Storage.vehicleData), -1)
+end
+
+function Storage.load()
+    local raw = LoadResourceFile(RESOURCE, DATA_FILE)
+    if raw and raw ~= "" then
+        local ok, decoded = pcall(json.decode, raw)
+        if ok and type(decoded) == "table" then
+            Storage.vehicleData = decoded
+        end
+    end
+end
+
+-- VEHICLE DATA OPERATIONS
+function Storage.lookupVehicleHandling(plate, vehicleHash)
+    -- First try to find exact plate match
+    for _, data in ipairs(Storage.vehicleData) do
+        if data.plate == plate and data.vehicle_hash == vehicleHash then
             return data
         end
     end
 
-    -- Then the model-wide default (plate == "*")
+    -- Then try to find wildcard (*) / default match
     for _, data in ipairs(Storage.vehicleData) do
-        if data.plate == "*" and data.vehicle_hash == hk then
+        if data.plate == "*" and data.vehicle_hash == vehicleHash then
             return data
         end
     end
@@ -174,179 +273,57 @@ function Storage.saveVehicleHandling(applyType, plate, vehicleHash, baseHandling
     -- "applyAsDefault" (and legacy "applyToModel") = model-wide default for every
     -- vehicle of this model. "applyToPlate" = single plate only.
     local isDefault = applyType == "applyAsDefault" or applyType == "applyToModel"
-    local hk = hashKey(vehicleHash)
-    local targetPlate = isDefault and "*" or plate
-    local base = asJsonString(baseHandlingData)
-    local handling = asJsonString(handlingData)
 
-    -- ---- update cache (mirror old removal semantics) ----
+    -- Remove existing data based on apply type
     if applyType == "applyToPlate" then
         for i = #Storage.vehicleData, 1, -1 do
-            local d = Storage.vehicleData[i]
-            if d.plate == plate and d.vehicle_hash == hk then
+            if Storage.vehicleData[i].plate == plate and Storage.vehicleData[i].vehicle_hash == vehicleHash then
                 table.remove(Storage.vehicleData, i)
             end
         end
     elseif isDefault then
         for i = #Storage.vehicleData, 1, -1 do
-            local d = Storage.vehicleData[i]
-            if d.vehicle_hash == hk and (d.plate == plate or d.plate == "*") then
+            if (Storage.vehicleData[i].plate == plate and Storage.vehicleData[i].vehicle_hash == vehicleHash) or
+               (Storage.vehicleData[i].plate == "*" and Storage.vehicleData[i].vehicle_hash == vehicleHash) then
                 table.remove(Storage.vehicleData, i)
             end
         end
     end
 
-    table.insert(Storage.vehicleData, {
-        plate = targetPlate,
-        vehicle_hash = hk,
-        base_handling_data = base,
-        handling_data = handling,
-    })
+    -- Add new data (handling blobs stored as JSON strings)
+    local newData = {
+        plate = isDefault and "*" or plate,
+        vehicle_hash = vehicleHash,
+        base_handling_data = asJsonString(baseHandlingData),
+        handling_data = asJsonString(handlingData)
+    }
 
-    -- ---- persist to DB ----
-    -- DELETE and the upsert below always target DIFFERENT primary keys, so they
-    -- are safe even though oxmysql may run them out of order.
-    if isDefault and plate and plate ~= "*" then
-        -- a previous plate-specific entry for this exact plate becomes redundant
-        dbExec(("DELETE FROM %s WHERE plate = ? AND vehicle_hash = ?"):format(VEHICLE_TABLE), { plate, hk })
-    end
-    dbExec(
-        ("INSERT INTO %s (plate, vehicle_hash, base_handling_data, handling_data) VALUES (?, ?, ?, ?) " ..
-         "ON DUPLICATE KEY UPDATE base_handling_data = VALUES(base_handling_data), handling_data = VALUES(handling_data)"):format(VEHICLE_TABLE),
-        { targetPlate, hk, base, handling }
-    )
+    table.insert(Storage.vehicleData, newData)
+
+    -- Persist + (re)generate the carpack so the change survives restarts.
+    Storage.persist()
+    Storage.writeCarpackMeta()
     return true
 end
 
 function Storage.deleteVehicleHandling(plate, vehicleHash)
-    local hk = hashKey(vehicleHash)
-
-    -- Remove the first matching row from the cache and capture its plate so the
-    -- DB delete hits exactly the same row.
-    local removedPlate = nil
     for i = #Storage.vehicleData, 1, -1 do
-        local d = Storage.vehicleData[i]
-        if d.vehicle_hash == hk and (d.plate == plate or d.plate == "*") then
-            removedPlate = d.plate
+        if (Storage.vehicleData[i].plate == plate and Storage.vehicleData[i].vehicle_hash == vehicleHash) or
+           (Storage.vehicleData[i].plate == "*" and Storage.vehicleData[i].vehicle_hash == vehicleHash) then
             table.remove(Storage.vehicleData, i)
             break
         end
     end
 
-    if removedPlate then
-        dbExec(("DELETE FROM %s WHERE plate = ? AND vehicle_hash = ?"):format(VEHICLE_TABLE), { removedPlate, hk })
-    end
+    Storage.persist()
+    Storage.writeCarpackMeta()
     return true
 end
 
--- ===========================================================================
--- STARTUP: create tables, load cache, migrate legacy carpack
--- ===========================================================================
-local function loadFromDb(cb)
-    exports.oxmysql:query(("SELECT plate, vehicle_hash, base_handling_data, handling_data FROM %s"):format(VEHICLE_TABLE), {}, function(vrows)
-        Storage.vehicleData = {}
-        if vrows then
-            for _, r in ipairs(vrows) do
-                Storage.vehicleData[#Storage.vehicleData + 1] = {
-                    plate = r.plate,
-                    vehicle_hash = hashKey(r.vehicle_hash),
-                    base_handling_data = r.base_handling_data,
-                    handling_data = r.handling_data,
-                }
-            end
-        end
+-- Load any previously saved defaults from disk on startup.
+Storage.load()
 
-        exports.oxmysql:query(("SELECT id, name, vehicle, edited_at, edited_by, handling_data FROM %s"):format(PROFILES_TABLE), {}, function(prows)
-            Storage.profilesData = {}
-            if prows then
-                for _, r in ipairs(prows) do
-                    Storage.profilesData[#Storage.profilesData + 1] = {
-                        id = tostring(r.id),
-                        name = r.name,
-                        vehicle = r.vehicle,
-                        edited_at = tostring(r.edited_at),
-                        edited_by = r.edited_by,
-                        handling_data = r.handling_data,
-                    }
-                end
-            end
-            if cb then cb() end
-        end)
-    end)
-end
-
--- One-time import of the old file-based store (carpack/defaults.json) into the
--- database. Only runs while the DB table is still empty; afterwards the file is
--- emptied so it can never be re-imported (the carpack folder may then be
--- deleted on the server).
-local function migrateCarpack()
-    if #Storage.vehicleData > 0 then return end
-
-    local raw = LoadResourceFile(RESOURCE, "carpack/defaults.json")
-    if not raw or raw == "" then return end -- nothing to migrate / fresh install
-
-    local ok, decoded = pcall(json.decode, raw)
-    if not ok or type(decoded) ~= "table" then
-        SaveResourceFile(RESOURCE, "carpack/defaults.json", "[]", -1)
-        return
-    end
-
-    local count = 0
-    for _, d in ipairs(decoded) do
-        if d.plate and d.vehicle_hash ~= nil then
-            local hk = hashKey(d.vehicle_hash)
-            local base = asJsonString(d.base_handling_data or "{}")
-            local handling = asJsonString(d.handling_data or "{}")
-
-            Storage.vehicleData[#Storage.vehicleData + 1] = {
-                plate = d.plate,
-                vehicle_hash = hk,
-                base_handling_data = base,
-                handling_data = handling,
-            }
-
-            dbExec(
-                ("INSERT INTO %s (plate, vehicle_hash, base_handling_data, handling_data) VALUES (?, ?, ?, ?) " ..
-                 "ON DUPLICATE KEY UPDATE base_handling_data = VALUES(base_handling_data), handling_data = VALUES(handling_data)"):format(VEHICLE_TABLE),
-                { d.plate, hk, base, handling }
-            )
-            count = count + 1
-        end
-    end
-
-    -- One-shot guard: clear the legacy store so it is never imported again.
-    SaveResourceFile(RESOURCE, "carpack/defaults.json", "[]", -1)
-    print(("^2[JG Handling] Migrated %d handling entr%s from carpack -> database^0"):format(count, count == 1 and "y" or "ies"))
-end
-
-CreateThread(function()
-    -- Wait for oxmysql to be up (queries before the connection is ready could
-    -- otherwise race the table creation).
-    local waited = 0
-    while not dbReady() and waited < 150 do
-        Wait(100)
-        waited = waited + 1
-    end
-    if not dbReady() then
-        print("^1[JG Handling] oxmysql is not started - database storage unavailable^0")
-        return
-    end
-
-    -- Chain create -> create -> load so the SELECTs never run before the tables
-    -- exist (oxmysql does not guarantee submission order across queries).
-    exports.oxmysql:query(CREATE_PROFILES_SQL, {}, function()
-        exports.oxmysql:query(CREATE_VEHICLE_SQL, {}, function()
-            loadFromDb(function()
-                migrateCarpack()
-                print(("^2[JG Handling] Database storage ready (%d vehicle handlings, %d profiles)^0")
-                    :format(#Storage.vehicleData, #Storage.profilesData))
-            end)
-        end)
-    end)
-end)
-
--- Export the storage functions for the (escrow) handlers in sv-vehicle.lua /
--- sv-profiles.lua, which reference the global `Storage`.
+-- Export the storage functions
 _G.Storage = Storage
 
-print("^2[JG Handling] Database-backed storage initialized^0")
+print("^2[JG Handling] File-based storage initialized (carpack defaults enabled)^0")
