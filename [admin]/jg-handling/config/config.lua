@@ -35,4 +35,4 @@ Config.DistanceTargets = {
 }
 
 -- Misc
-Config.AutoRunSQL = true -- File-based storage initialization (no longer uses SQL)
+Config.AutoRunSQL = true -- Automatically create the required database tables (oxmysql) on startup

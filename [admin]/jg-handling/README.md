@@ -11,9 +11,10 @@ Full instruction installations can be found in the docs here: https://docs.jgscr
 You MUST have the following set up and ensured BEFORE JG Handling in order for the script to work:
 
 - [ox_lib](https://github.com/overextended/ox_lib/releases)
+- [oxmysql](https://github.com/overextended/oxmysql/releases)
 - OneSync Infinity
 
-**Note:** This version uses file-based storage instead of oxmysql for standalone servers.
+**Note:** Handling profiles and "Apply as default" handling are stored in your FiveM server's MySQL database via oxmysql. The required tables (`handling_profiles`, `handling_vehicle_data`) are created automatically on startup when `Config.AutoRunSQL` is enabled.
 
 ## Support
 
