@@ -6,16 +6,23 @@ name: Deploy Resources via SFTP
 # Es gibt ZWEI Betriebsarten:
 #
 # 1) Bei jedem Push (schnell, Standard):
-#    Es wird NUR der Diff des Pushes übertragen – geänderte/neue Dateien hoch,
-#    gelöschte/umbenannte runter. Kein Voll-Scan des Servers -> Sekunden statt
-#    Minuten. Solange ausschließlich dieser Workflow den Ordner verändert,
-#    bleibt der Server dadurch exakt gleich zum Repository.
+#    Es wird GENAU das übertragen, was der Push geändert hat – nicht mehr und
+#    nicht weniger:
+#      * neue/geänderte Dateien  -> hochladen (put)
+#      * gelöschte Dateien       -> löschen (rm)
+#      * umbenannte Dateien      -> alter Name rm + neuer Name put
+#    Es werden AUSSCHLIESSLICH DATEIEN angefasst, NIEMALS Verzeichnisse gelöscht.
+#    Grund: git trackt nur Dateien – ein Commit kann also nie "lösche Ordner X"
+#    bedeuten, nur "lösche diese Dateien". Ein zusätzliches 'rmdir' wäre eine
+#    Erfindung des Skripts und kann auf manchen SFTP-Servern sogar REKURSIV
+#    wirken und Geschwister-Resources mitreißen (genau so verschwand früher der
+#    komplette [standalone]-Ordner). Kein Voll-Scan des Servers -> Sekunden.
 #
 # 2) Manuell ("Run workflow" -> workflow_dispatch): VOLL-MIRROR.
 #    Spiegelt den kompletten Repo-Stand und LÖSCHT auf dem Server alles, was
 #    nicht im Repo liegt. Gedacht als Erst-Synchronisation bzw. "Reparatur-
-#    Knopf", falls der Server doch einmal vom Repo abgewichen sein sollte
-#    (z.B. nach einem abgebrochenen Deploy).
+#    Knopf" (z.B. um leer gebliebene Ordner aufzuräumen oder fehlende Dateien
+#    nachzuziehen).
 #
 # Nur git-interne Dinge (.git, .github, .gitignore, .gitattributes) werden in
 # beiden Fällen ausgenommen.
@@ -80,7 +87,6 @@ jobs:
 
           : > batch.sftp
           declare -A made_dir       # schon angelegte Remote-Verzeichnisse (dedupe)
-          declare -A deleted_dir    # Verzeichnisse, in denen gelöscht wurde
 
           uploads=()
           deletes=()
@@ -117,6 +123,7 @@ jobs:
 
           # Remote-Elternverzeichnisse für eine Datei anlegen (kürzestes zuerst).
           # '-mkdir' -> Fehler (Verzeichnis existiert schon) wird ignoriert.
+          # (mkdir ist unkritisch: es legt nur an, löscht nie etwas.)
           emit_dirs() {
             local dir; dir=$(dirname "$1")
             [ "$dir" = "." ] && return 0
@@ -132,18 +139,6 @@ jobs:
             done
           }
 
-          record_deleted_dir() {
-            local dir; dir=$(dirname "$1")
-            [ "$dir" = "." ] && return 0
-            local acc="" seg
-            local IFS='/'
-            for seg in $dir; do
-              [ -z "$seg" ] && continue
-              if [ -z "$acc" ]; then acc="$seg"; else acc="$acc/$seg"; fi
-              deleted_dir[$acc]=1
-            done
-          }
-
           # Uploads: Verzeichnisse sicherstellen + Datei übertragen.
           # Pfade in "..." -> sftp macht KEIN Globbing (wichtig für [klammer]-Ordner).
           if [ "${#uploads[@]}" -gt 0 ]; then
@@ -153,24 +148,19 @@ jobs:
             done
           fi
 
-          # Löschungen (auch der "alte" Name bei Umbenennungen).
-          # '-rm' -> Fehler (Datei schon weg) wird ignoriert.
+          # Löschungen: GENAU die Dateien entfernen, die der Commit entfernt hat
+          # (auch der "alte" Name bei Umbenennungen). '-rm' -> Fehler (Datei
+          # schon weg) wird ignoriert.
+          #
+          # BEWUSST KEIN 'rmdir': Es werden nur Dateien gelöscht, niemals
+          # Verzeichnisse. Damit kann eine Löschung niemals über die im Commit
+          # entfernten Dateien hinausgreifen oder (bei rekursivem rmdir mancher
+          # Server) Nachbar-Resources mitreißen. Ein evtl. leer zurückbleibender
+          # Ordner stört FXServer nicht; aufräumen tut bei Bedarf der Voll-Mirror.
           if [ "${#deletes[@]}" -gt 0 ]; then
             for f in "${deletes[@]}"; do
               printf -- '-rm "%s/%s"\n' "$REMOTE_BASE" "$f" >> batch.sftp
-              record_deleted_dir "$f"
             done
-          fi
-
-          # Leer gewordene Verzeichnisse aufräumen (tiefste zuerst).
-          # '-rmdir' entfernt nur LEERE Verzeichnisse; bei nicht-leeren schlägt es
-          # fehl und wird ignoriert -> nichts mit Inhalt geht verloren.
-          if [ "${#deleted_dir[@]}" -gt 0 ]; then
-            for d in "${!deleted_dir[@]}"; do
-              printf '%s\t%s\n' "$(awk -F/ '{print NF}' <<< "$d")" "$d"
-            done | sort -rn | cut -f2- | while IFS= read -r d; do
-              printf -- '-rmdir "%s/%s"\n' "$REMOTE_BASE" "$d"
-            done >> batch.sftp
           fi
 
           echo "=== Geplante SFTP-Befehle ==="
