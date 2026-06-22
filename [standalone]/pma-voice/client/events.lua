@@ -1,34 +1,28 @@
-isInitialized = false
-
 function handleInitialState()
 	local voiceModeData = Cfg.voiceModes[mode]
 	MumbleSetTalkerProximity(voiceModeData[1] + 0.0)
 	MumbleClearVoiceTarget(voiceTarget)
 	MumbleSetVoiceTarget(voiceTarget)
-	MumbleSetVoiceChannel(LocalPlayer.state.assignedChannel)
+	MumbleSetVoiceChannel(playerServerId)
 
-	while MumbleGetVoiceChannelFromServerId(playerServerId) ~= LocalPlayer.state.assignedChannel do
-		Wait(100)
-		MumbleSetVoiceChannel(LocalPlayer.state.assignedChannel)
+	while MumbleGetVoiceChannelFromServerId(playerServerId) ~= playerServerId do
+		Wait(250)
 	end
 
-	isInitialized = true
-
-	MumbleAddVoiceTargetChannel(voiceTarget, LocalPlayer.state.assignedChannel)
+	MumbleAddVoiceTargetChannel(voiceTarget, playerServerId)
 
 	addNearbyPlayers()
 end
 
 AddEventHandler('mumbleConnected', function(address, isReconnecting)
-	logger.info('Connected to mumble server with address of %s, is this a reconnect %s',
-		GetConvarInt('voice_hideEndpoints', 1) == 1 and 'HIDDEN' or address, isReconnecting)
+	logger.info('Connected to mumble server with address of %s, is this a reconnect %s', GetConvarInt('voice_hideEndpoints', 1) == 1 and 'HIDDEN' or address, isReconnecting)
 
 	logger.log('Connecting to mumble, setting targets.')
 	-- don't try to set channel instantly, we're still getting data.
 	local voiceModeData = Cfg.voiceModes[mode]
 	LocalPlayer.state:set('proximity', {
 		index = mode,
-		distance = voiceModeData[1],
+		distance =  voiceModeData[1],
 		mode = voiceModeData[2],
 	}, true)
 
@@ -38,9 +32,7 @@ AddEventHandler('mumbleConnected', function(address, isReconnecting)
 end)
 
 AddEventHandler('mumbleDisconnected', function(address)
-	isInitialized = false
-	logger.info('Disconnected from mumble server with address of %s',
-		GetConvarInt('voice_hideEndpoints', 1) == 1 and 'HIDDEN' or address)
+	logger.info('Disconnected from mumble server with address of %s', GetConvarInt('voice_hideEndpoints', 1) == 1 and 'HIDDEN' or address)
 end)
 
 -- TODO: Convert the last Cfg to a Convar, while still keeping it simple.

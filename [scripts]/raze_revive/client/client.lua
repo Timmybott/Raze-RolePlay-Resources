@@ -3,14 +3,37 @@ local function setStatusesFull()
     TriggerEvent('esx_status:set', 'thirst', 1000000)
 end
 
+-- Schutz gegen Doppel-Revive: Der Server feuert pro Revive ZWEI Events
+-- (esx_ambulancejob:revive UND esx_ambulance:revive). Beide landen hier in
+-- doRevive(). Ohne Sperre würde der Resurrect doppelt laufen und einen Klon-Ped
+-- des Spielers hinterlassen. Wir ignorieren daher alle weiteren Aufrufe innerhalb
+-- eines kurzen Zeitfensters.
+local lastRevive = 0
+
 local function doRevive()
+    local now = GetGameTimer()
+    if now - lastRevive < 2000 then return end
+    lastRevive = now
+
     local playerPed = PlayerPedId()
+    -- Sterbeposition/-richtung merken, BEVOR der Resurrect etwas verschiebt,
+    -- damit der Spieler exakt dort aufwacht, wo er gestorben ist (keine "Zeitreise").
     local coords = GetEntityCoords(playerPed)
+    local heading = GetEntityHeading(playerPed)
+
     DoScreenFadeOut(800)
     while not IsScreenFadedOut() do
         Citizen.Wait(10)
     end
-    NetworkResurrectLocalPlayer(coords.x, coords.y, coords.z, GetEntityHeading(playerPed), true, true)
+
+    -- 6. Parameter MUSS false sein: Mit true springt der Resurrect auf eine
+    -- frühere Netzwerk-Position zurück (= der "Zeitreise"-Bug).
+    NetworkResurrectLocalPlayer(coords.x, coords.y, coords.z, heading, true, false)
+    -- Position zusätzlich hart setzen, damit der Spieler garantiert an der
+    -- Sterbestelle aufwacht (gleicher Ansatz wie sob-death).
+    SetEntityCoords(playerPed, coords.x, coords.y, coords.z, false, false, false, false)
+    SetEntityHeading(playerPed, heading)
+
     ClearPedTasksImmediately(playerPed)
     ClearPedBloodDamage(playerPed)
     SetEntityHealth(playerPed, 200)
